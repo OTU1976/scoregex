@@ -1,0 +1,75 @@
+﻿zone_id: "gex_001"
+zone_name: "Pays de Gex"
+version: "3.0.0"
+active: true
+
+communes:
+  "01012": "Cessy"
+  "01123": "Ferney-Voltaire"
+  "01194": "Gex"
+  "01200": "Prevessin-Moens"
+  "01283": "Ornex"
+  "01307": "Saint-Genis-Pouilly"
+  "01423": "Sergy"
+  "01446": "Thoiry"
+
+bbox:
+  lon_min: 5.88
+  lat_min: 46.10
+  lon_max: 6.28
+  lat_max: 46.38
+
+reference_point:
+  name: "Geneve Cornavin"
+  lon: 6.1432
+  lat: 46.2017
+
+sar:
+  rho: 0.34
+  bandwidth_km: 2.0
+
+hedonic_betas:
+  dpe_per_class: -0.148
+  distance_gva_per_min: -0.028
+  threshold_gva_min: 15.0
+  bruit_a40_penalty: -0.163
+  vue_leman_bonus: 0.112
+  ecole_intl_bonus: 0.071
+  desert_medical_penalty: -0.089
+  frontalier_premium_max: 0.187
+
+merton:
+  mu: 0.032
+  sigma_base: 0.094
+  lambda_poisson: 0.42
+  mu_jump: 0.07
+  sigma_jump: 0.14
+
+hmm:
+  n_states: 4
+  state_names: ["expansion", "plateau", "correction", "stress"]
+  state_probs_stationary: [0.58, 0.27, 0.11, 0.04]
+
+score_weights:
+  w_spatial: 0.28
+  w_frontalier: 0.34
+  w_esg: 0.17
+  w_regime: 0.12
+  w_quantum: 0.09
+
+esg_weights:
+  w_E: 0.50
+  w_S: 0.30
+  w_G: 0.20
+
+alerts:
+  rmse_eur_warning: 22000
+  score_deal_threshold: 750
+  chf_eur_upper: 1.02
+  chf_eur_lower: 0.92
+
+pricing:
+  b2c_monthly_eur: 99
+  b2b_agence_monthly_eur: 490
+  b2b_notaire_monthly_eur: 1490
+  b2b_banque_monthly_eur: 1990
