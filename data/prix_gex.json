@@ -1,0 +1,50 @@
+{
+  "01071": {
+    "commune": "Cessy",
+    "prix_m2_median": 4959.0,
+    "prix_m2_moyen": 4871.0,
+    "nb_transactions": 56
+  },
+  "01160": {
+    "commune": "Ferney-Voltaire",
+    "prix_m2_median": 4951.0,
+    "prix_m2_moyen": 4986.0,
+    "nb_transactions": 151
+  },
+  "01173": {
+    "commune": "Gex",
+    "prix_m2_median": 4674.0,
+    "prix_m2_moyen": 5137.0,
+    "nb_transactions": 167
+  },
+  "01313": {
+    "commune": "Prevessin-Moens",
+    "prix_m2_median": 5543.0,
+    "prix_m2_moyen": 5475.0,
+    "nb_transactions": 77
+  },
+  "01281": {
+    "commune": "Ornex",
+    "prix_m2_median": 5269.0,
+    "prix_m2_moyen": 5059.0,
+    "nb_transactions": 44
+  },
+  "01354": {
+    "commune": "Saint-Genis-Pouilly",
+    "prix_m2_median": 4875.0,
+    "prix_m2_moyen": 4894.0,
+    "nb_transactions": 107
+  },
+  "01401": {
+    "commune": "Sergy",
+    "prix_m2_median": 3480.0,
+    "prix_m2_moyen": 5269.0,
+    "nb_transactions": 15
+  },
+  "01419": {
+    "commune": "Thoiry",
+    "prix_m2_median": 4958.0,
+    "prix_m2_moyen": 5023.0,
+    "nb_transactions": 41
+  }
+}
