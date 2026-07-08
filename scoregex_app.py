@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-API_BASE = "https://scoregex.com"
+API_BASE = "https://scoregex.vercel.app"
 
 # ── CSS Global ────────────────────────────────────────────────────────────────
 st.markdown("""
