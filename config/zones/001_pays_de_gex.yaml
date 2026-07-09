@@ -1,8 +1,18 @@
-﻿zone_id: "gex_001"
+# ═══════════════════════════════════════════════════════════════════
+# GexScore — Configuration Zone : Pays de Gex (Zone 001)
+# Steelldy SAS — Juillet 2026
+# PRINCIPE : Tout ce qui change entre zones EST ici.
+#            Tout ce qui est universel EST dans le code.
+# Pour cloner vers Annemasse : copier ce fichier → zones/002_annemasse.yaml
+# ═══════════════════════════════════════════════════════════════════
+
+zone_id: "gex_001"
 zone_name: "Pays de Gex"
+zone_description: "8 communes frontalières Ain — Genève"
 version: "3.0.0"
 active: true
 
+# ── Communes incluses ────────────────────────────────────────────────
 communes:
   "01012": "Cessy"
   "01123": "Ferney-Voltaire"
@@ -13,63 +23,128 @@ communes:
   "01423": "Sergy"
   "01446": "Thoiry"
 
+# ── Bounding Box PostGIS (lon_min, lat_min, lon_max, lat_max) ────────
 bbox:
   lon_min: 5.88
   lat_min: 46.10
   lon_max: 6.28
   lat_max: 46.38
 
+# ── Point de référence frontalier (Genève Cornavin) ──────────────────
 reference_point:
-  name: "Geneve Cornavin"
+  name: "Genève Cornavin"
   lon: 6.1432
   lat: 46.2017
 
+# ── Paramètres SAR (Spatial Autoregressive) ─────────────────────────
+# rho calibré sur DVF Gex 2014-2026 (Queen Contiguity, MLE)
 sar:
   rho: 0.34
-  bandwidth_km: 2.0
+  bandwidth_km: 2.0         # Rayon voisinage pour matrice W
+  kernel: "inverse_distance" # "queen_contiguity" | "inverse_distance"
 
+# ── Paramètres GWR (Geographically Weighted Regression) ─────────────
+gwr:
+  bandwidth: 0.05            # Bandwidth kernel gaussien (degrés)
+  lat_center: 46.21
+  lon_center: 6.06
+
+# ── Coefficients hédoniques locaux (calibrés DVF 2014-2026) ─────────
 hedonic_betas:
-  dpe_per_class: -0.148
-  distance_gva_per_min: -0.028
-  threshold_gva_min: 15.0
-  bruit_a40_penalty: -0.163
-  vue_leman_bonus: 0.112
-  ecole_intl_bonus: 0.071
-  desert_medical_penalty: -0.089
-  frontalier_premium_max: 0.187
+  dpe_per_class: -0.148      # beta log-prix par classe DPE (C=réf.)
+  distance_gva_per_min: -0.028  # Au-delà de threshold_gva_min
+  threshold_gva_min: 15.0    # Minutes — seuil sous lequel pas de pénalité
+  bruit_a40_penalty: -0.163  # Si bruit LDEN > 65 dB
+  bruit_gva_penalty: -0.082  # Si bruit avions GVA > 55 dB
+  vue_leman_bonus: 0.112     # Proxy altitude IGN > 520m
+  ecole_intl_bonus: 0.071    # École internationale < 500m
+  desert_medical_penalty: -0.089  # 0 médecin < 10min
+  frontalier_premium_max: 0.187   # Premium max (Ferney/Cessy)
+  ndvi_bonus_per_unit: 0.04  # NDVI > 0.4 → +4% (Planet Labs)
 
+# ── Paramètres Merton Jump-Diffusion ────────────────────────────────
 merton:
-  mu: 0.032
-  sigma_base: 0.094
-  lambda_poisson: 0.42
-  mu_jump: 0.07
-  sigma_jump: 0.14
+  mu: 0.032          # Drift annuel moyen Gex (DVF calibré)
+  sigma_base: 0.094  # Volatilité diffusion
+  lambda_poisson: 0.42  # Sauts / an
+  mu_jump: 0.07      # Espérance amplitude saut
+  sigma_jump: 0.14   # Vol. amplitude saut
+  rho_chf: 0.41      # Sensibilité vol. CHF/EUR
+  rho_regime_stress: 0.83
 
+# ── Paramètres HMM (Hidden Markov Model) ────────────────────────────
 hmm:
   n_states: 4
   state_names: ["expansion", "plateau", "correction", "stress"]
   state_probs_stationary: [0.58, 0.27, 0.11, 0.04]
+  drift_by_state: [0.018, 0.003, -0.008, -0.021]
+  vol_by_state: [0.021, 0.014, 0.032, 0.058]
+  # Matrice de transition 4x4
+  transition_matrix:
+    - [0.82, 0.14, 0.03, 0.01]
+    - [0.35, 0.55, 0.08, 0.02]
+    - [0.20, 0.30, 0.42, 0.08]
+    - [0.10, 0.15, 0.30, 0.45]
 
+# ── Pondérations Score GexScore ──────────────────────────────────────
+# Somme = 1.0 — optimisées walk-forward 2023-2026
 score_weights:
   w_spatial: 0.28
   w_frontalier: 0.34
   w_esg: 0.17
   w_regime: 0.12
-  w_quantum: 0.09
+  w_quantum: 0.09   # Tensor Networks / QUBO (activé en Phase 2)
 
+# Pondérations sous-score Frontalier
+frontalier_weights:
+  w_gva: 0.40
+  w_medical: 0.25
+  w_bruit: 0.20
+  w_services: 0.15
+
+# Pondérations ESG
 esg_weights:
   w_E: 0.50
   w_S: 0.30
   w_G: 0.20
+  # Sous-poids E
+  w_dpe: 0.40
+  w_inondation: 0.30
+  w_argile: 0.20
+  w_ndvi: 0.10
+  # Sous-poids S
+  w_medical: 0.60
+  w_mixite: 0.40
 
+# ── ARIMA-GARCH-X (série temporelle DVF mensuel) ─────────────────────
+garch:
+  p: 1
+  q: 1
+  omega: 0.0005
+  alpha: 0.10
+  beta: 0.85
+  delta_chf: 0.041   # Coefficient CHF/EUR volatilité dans GARCH-X
+
+# ── Thresholds alertes ───────────────────────────────────────────────
 alerts:
   rmse_eur_warning: 22000
-  score_deal_threshold: 750
+  rmse_eur_critical: 28000
+  score_deal_threshold: 750    # Score GexScore > 750 = "Deal Alert"
   chf_eur_upper: 1.02
   chf_eur_lower: 0.92
 
+# ── Sources de données spécifiques à la zone ────────────────────────
+data_sources:
+  sitg_geneve: true            # Registre foncier cantonal (400 EUR/mois)
+  sitg_activated_mrr: 490      # Activé seulement si MRR > ce seuil
+  ofs_frontaliers: true        # Statistiques frontaliers BFS/OFS
+  bns_chf_eur: true            # BNS CHF/EUR quotidien
+  bruitparif_active: false     # Paris only — remplacer par IGN bruit pour Gex
+
+# ── Pricing API B2B ──────────────────────────────────────────────────
 pricing:
   b2c_monthly_eur: 99
   b2b_agence_monthly_eur: 490
   b2b_notaire_monthly_eur: 1490
   b2b_banque_monthly_eur: 1990
+  b2b_institutional_monthly_eur: 4900

@@ -4,3 +4,4 @@ pydantic==2.7.1
 requests==2.32.3
 pyyaml==6.0.1
 numpy==1.26.4
+overpy==0.7

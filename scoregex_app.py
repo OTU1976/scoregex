@@ -19,8 +19,17 @@ st.set_page_config(
 
 API_BASE = "https://scoregex.vercel.app"
 
+def html_block(s: str) -> str:
+    """Supprime l'indentation Python de chaque ligne avant de passer le HTML
+    à st.markdown(). Sans cela, Markdown interprete les lignes indentees
+    (>=4 espaces, frequent quand le bloc est imbrique dans des if/else)
+    comme un bloc de code et les affiche telles quelles au lieu de les
+    rendre en HTML — c'est le bug qui affichait le code source a l'ecran."""
+    return "\n".join(line.strip() for line in s.strip("\n").splitlines())
+
+
 # ── CSS Global ────────────────────────────────────────────────────────────────
-st.markdown("""
+st.markdown(html_block("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;700&display=swap');
 
@@ -427,10 +436,10 @@ section[data-testid="stMain"] > div { padding: 0 !important; }
 .sg-table td:last-child { color: #C9A961; font-family: 'Courier New', monospace; font-size: 1rem; }
 .sg-table tr:hover td { background: rgba(201,169,97,0.03); }
 </style>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
 
 # ── Navigation ────────────────────────────────────────────────────────────────
-st.markdown("""
+st.markdown(html_block("""
 <div class="sg-nav">
     <div class="sg-logo">Score<span>Gex</span></div>
     <div class="sg-nav-links">
@@ -440,7 +449,7 @@ st.markdown("""
         <span class="sg-badge">Beta</span>
     </div>
 </div>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
 
 # ── Session state ─────────────────────────────────────────────────────────────
 if "page" not in st.session_state:
@@ -461,14 +470,14 @@ with st.sidebar:
         st.session_state.page = "pricing"
     
     st.markdown("---")
-    st.markdown("""
+    st.markdown(html_block("""
     <div style="font-size:0.72rem;color:#333;line-height:1.6;">
     Données DVF réelles<br>
     DGFiP 2014–2025<br>
     658 transactions calibrées<br>
     8 communes Pays de Gex
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════════
 # PAGE : HOME
@@ -476,7 +485,7 @@ with st.sidebar:
 if st.session_state.page == "home":
     
     # Hero
-    st.markdown("""
+    st.markdown(html_block("""
     <div class="sg-hero">
         <div class="sg-eyebrow">Intelligence Immobilière Quantitative</div>
         <h1 class="sg-h1">
@@ -507,22 +516,22 @@ if st.session_state.page == "home":
         </div>
     </div>
     <div class="sg-divider"></div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
 
     # Features
-    st.markdown("""
+    st.markdown(html_block("""
     <div class="sg-section">
         <div style="text-align:center; margin-bottom: 4rem;">
             <p class="sg-eyebrow" style="justify-content:center;">Ce que ScoreGex calcule</p>
             <h2 class="sg-section-title" style="text-align:center;">Trois niveaux d'intelligence</h2>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("""
+        st.markdown(html_block("""
         <div class="sg-score-card">
             <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#C9A961;margin-bottom:1rem;">01 — AVM Quantitatif</div>
             <div style="font-size:1.5rem;font-family:'Playfair Display',serif;color:#F5F0E8;margin-bottom:0.75rem;">Prix de Marché Réel</div>
@@ -531,10 +540,10 @@ if st.session_state.page == "home":
                 Pas une estimation générique — un calcul sur votre bien précis.
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """), unsafe_allow_html=True)
     
     with col2:
-        st.markdown("""
+        st.markdown(html_block("""
         <div class="sg-score-card" style="border-color:#C9A961;">
             <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#C9A961;margin-bottom:1rem;">02 — Score GexScore</div>
             <div style="font-size:1.5rem;font-family:'Playfair Display',serif;color:#F5F0E8;margin-bottom:0.75rem;">Indice 0–1000</div>
@@ -543,10 +552,10 @@ if st.session_state.page == "home":
                 bruit A40/GVA, et score ESG. Grade de AAA à CCC, comme une notation obligataire.
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """), unsafe_allow_html=True)
     
     with col3:
-        st.markdown("""
+        st.markdown(html_block("""
         <div class="sg-score-card">
             <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#C9A961;margin-bottom:1rem;">03 — Deal Alert</div>
             <div style="font-size:1.5rem;font-family:'Playfair Display',serif;color:#F5F0E8;margin-bottom:0.75rem;">Signal Temps Réel</div>
@@ -555,12 +564,12 @@ if st.session_state.page == "home":
                 Signal Deal si écart > 5%. Quantification de l'économie potentielle en EUR.
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """), unsafe_allow_html=True)
 
     st.markdown('<div class="sg-divider"></div>', unsafe_allow_html=True)
     
     # CTA
-    st.markdown("""
+    st.markdown(html_block("""
     <div style="text-align:center;padding:5rem 2rem;">
         <p class="sg-eyebrow" style="justify-content:center;">Commencer maintenant</p>
         <h2 style="font-family:'Playfair Display',serif;font-size:2rem;color:#F5F0E8;margin-bottom:1rem;">
@@ -568,7 +577,7 @@ if st.session_state.page == "home":
         </h2>
         <p style="color:#555;font-size:0.95rem;margin-bottom:2rem;">Aucune carte bancaire requise. Accès immédiat.</p>
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
     
     col_a, col_b, col_c = st.columns([1, 2, 1])
     with col_b:
@@ -582,13 +591,13 @@ if st.session_state.page == "home":
 # ════════════════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "estimate":
     
-    st.markdown("""
+    st.markdown(html_block("""
     <div style="padding: 3rem 3rem 1rem;">
         <p class="sg-eyebrow">Moteur AVM</p>
         <h1 class="sg-section-title">Estimation quantitative</h1>
         <p class="sg-section-sub">Calibré sur 658 transactions DVF réelles DGFiP 2014–2025</p>
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
     
     col_form, col_result = st.columns([1, 1], gap="large")
     
@@ -660,7 +669,7 @@ elif st.session_state.page == "estimate":
             adj_dpe = avm.get("ajustement_dpe_pct", 0)
             
             # Score principal
-            st.markdown(f"""
+            st.markdown(html_block(f"""
             <div class="sg-score-card" style="border-color: {'#C9A961' if score >= 700 else '#2A2A2A'};">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.5rem;">
                     <div>
@@ -698,7 +707,7 @@ elif st.session_state.page == "estimate":
                     <span class="sg-metric-value {'positive' if adj_dpe >= 0 else 'negative'}">{adj_dpe:+.1f}%</span>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """), unsafe_allow_html=True)
             
             # Deal Alert
             if deal:
@@ -707,7 +716,7 @@ elif st.session_state.page == "estimate":
                 eco = deal.get("economie_potentielle_eur", 0)
                 
                 if is_deal:
-                    st.markdown(f"""
+                    st.markdown(html_block(f"""
                     <div class="sg-deal-box">
                         <div class="sg-deal-title">⚡ DEAL ALERT DÉTECTÉ</div>
                         <div style="font-family:'Playfair Display',serif;font-size:1.6rem;color:#F5F0E8;margin:0.3rem 0;">
@@ -717,25 +726,25 @@ elif st.session_state.page == "estimate":
                             Économie potentielle : {eco:,.0f} EUR
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """), unsafe_allow_html=True)
                 else:
-                    st.markdown(f"""
+                    st.markdown(html_block(f"""
                     <div class="sg-deal-box nodeal">
                         <div class="sg-deal-title nodeal">ANALYSE PRIX ANNONCÉ</div>
                         <div style="font-size:0.9rem;color:#555;margin-top:0.3rem;">
                             {'Bien annoncé ' + str(abs(disc)) + '% au-dessus du marché DVF' if disc < 0 else 'Prix cohérent avec le marché DVF'}
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """), unsafe_allow_html=True)
         else:
-            st.markdown("""
+            st.markdown(html_block("""
             <div class="sg-score-card" style="text-align:center;padding:4rem 2rem;">
                 <div style="font-size:3rem;margin-bottom:1rem;opacity:0.2;">◈</div>
                 <div style="font-size:0.8rem;color:#333;letter-spacing:0.1em;text-transform:uppercase;">
                     Remplissez le formulaire<br>et lancez le calcul
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """), unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -745,13 +754,13 @@ elif st.session_state.page == "estimate":
 # ════════════════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "market":
     
-    st.markdown("""
+    st.markdown(html_block("""
     <div style="padding: 3rem 3rem 1rem;">
         <p class="sg-eyebrow">Données DVF Réelles</p>
         <h1 class="sg-section-title">Prix du marché — Pays de Gex</h1>
         <p class="sg-section-sub">Source : DGFiP Demandes de Valeurs Foncières 2014–2025 · Licence Ouverte 2.0</p>
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
     
     # Fetch market data
     try:
@@ -761,7 +770,7 @@ elif st.session_state.page == "market":
             communes_data = data.get("communes", {})
             
             # Table
-            st.markdown("""
+            st.markdown(html_block("""
             <div style="padding: 0 3rem;">
                 <table class="sg-table">
                     <thead>
@@ -772,7 +781,7 @@ elif st.session_state.page == "market":
                         </tr>
                     </thead>
                     <tbody>
-            """, unsafe_allow_html=True)
+            """), unsafe_allow_html=True)
             
             rows = ""
             for code, info in sorted(communes_data.items(), key=lambda x: -x[1]["prix_m2_median"]):
@@ -787,7 +796,7 @@ elif st.session_state.page == "market":
             st.markdown(rows + "</tbody></table></div>", unsafe_allow_html=True)
             
             # Key insight
-            st.markdown("""
+            st.markdown(html_block("""
             <div style="padding: 3rem;">
                 <div class="sg-score-card">
                     <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#C9A961;margin-bottom:1rem;">
@@ -801,7 +810,7 @@ elif st.session_state.page == "market":
                     </div>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """), unsafe_allow_html=True)
         else:
             st.error("API non disponible")
     except Exception as e:
@@ -813,18 +822,18 @@ elif st.session_state.page == "market":
 # ════════════════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "pricing":
     
-    st.markdown("""
+    st.markdown(html_block("""
     <div style="padding: 3rem 3rem 2rem;text-align:center;">
         <p class="sg-eyebrow" style="justify-content:center;">Accès à la plateforme</p>
         <h1 class="sg-section-title" style="text-align:center;">Tarification transparente</h1>
         <p style="color:#555;font-size:0.9rem;">Sans engagement. Sans frais cachés.</p>
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("""
+        st.markdown(html_block("""
         <div class="sg-plan">
             <div class="sg-plan-name">Découverte</div>
             <div class="sg-plan-price">0 <span>EUR</span></div>
@@ -834,10 +843,10 @@ elif st.session_state.page == "pricing":
             <div class="sg-plan-feature">Prix marché DVF réel</div>
             <div class="sg-plan-feature">Deal Alert basique</div>
         </div>
-        """, unsafe_allow_html=True)
+        """), unsafe_allow_html=True)
     
     with col2:
-        st.markdown("""
+        st.markdown(html_block("""
         <div class="sg-plan featured">
             <div class="sg-plan-badge">Recommandé</div>
             <div class="sg-plan-name">Frontalier Pro</div>
@@ -850,10 +859,10 @@ elif st.session_state.page == "pricing":
             <div class="sg-plan-feature">Historique 12 mois</div>
             <div class="sg-plan-feature">Support email prioritaire</div>
         </div>
-        """, unsafe_allow_html=True)
+        """), unsafe_allow_html=True)
     
     with col3:
-        st.markdown("""
+        st.markdown(html_block("""
         <div class="sg-plan">
             <div class="sg-plan-name">B2B Agences</div>
             <div class="sg-plan-price">490 <span>EUR / mois</span></div>
@@ -865,20 +874,20 @@ elif st.session_state.page == "pricing":
             <div class="sg-plan-feature">SLA 99.5% uptime</div>
             <div class="sg-plan-feature">Onboarding dédié</div>
         </div>
-        """, unsafe_allow_html=True)
+        """), unsafe_allow_html=True)
 
-    st.markdown("""
+    st.markdown(html_block("""
     <div style="text-align:center;padding:2rem;margin-top:1rem;">
         <p style="color:#333;font-size:0.8rem;margin-bottom:0.5rem;">
             Pour banques et family offices : tarification sur mesure à partir de 1 990 EUR/mois
         </p>
         <p style="color:#333;font-size:0.78rem;">contact@scoregex.com</p>
     </div>
-    """, unsafe_allow_html=True)
+    """), unsafe_allow_html=True)
 
 
 # ── Footer ────────────────────────────────────────────────────────────────────
-st.markdown("""
+st.markdown(html_block("""
 <div class="sg-divider"></div>
 <div class="sg-footer">
     <div class="sg-footer-logo">ScoreGex</div>
@@ -894,4 +903,4 @@ st.markdown("""
         Estimations indicatives AVM ±8%. Ne remplace pas l'expertise d'un professionnel immobilier.
     </div>
 </div>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
