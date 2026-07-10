@@ -46,6 +46,7 @@ Auteur : Steelldy SAS — Juillet 2026
 import os
 import sys
 import json
+import time
 import logging
 import concurrent.futures
 from functools import lru_cache
@@ -53,6 +54,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -74,7 +76,7 @@ from engine.score_gexscore import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 
 app = FastAPI(
     title="GexScore API",
@@ -99,9 +101,16 @@ app.add_middleware(
 CONFIG_DIR = BASE_DIR / "config" / "zones"
 PRIX_JSON_PATH = BASE_DIR / "data" / "prix_gex.json"
 
-# Filet de sécurité UNIQUEMENT si data/prix_gex.json est introuvable au
-# runtime (ex : problème de bundling Vercel). Ce n'est jamais la source de
-# vérité — la vraie donnée vient du pipeline DVF (scripts/process_dvf.py).
+# Supabase (lecture publique — clé anon, RLS restreint à SELECT sur `biens`)
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+PRIX_CACHE_TTL_SECONDS = 3600  # 1h — évite de taper Supabase à chaque requête
+
+# Filets de sécurité, dans l'ordre où ils sont essayés si Supabase échoue :
+# 1) data/prix_gex.json (ancien pipeline, snapshot du 07/07/2026)
+# 2) ce dict minimal, en tout dernier recours.
+# Ce n'est JAMAIS la source de vérité — la vraie donnée vient de Supabase
+# (table `biens`, alimentée par scripts/upload_dvf_to_supabase.py).
 _PRIX_FALLBACK = {
     "01071": {"commune": "Cessy", "prix_m2_median": 4959},
     "01160": {"commune": "Ferney-Voltaire", "prix_m2_median": 4951},
@@ -114,20 +123,71 @@ _PRIX_FALLBACK = {
 }
 PRIX_ZONE_DEFAULT = 4900
 
+_prix_cache: dict = {"data": None, "loaded_at": 0.0, "source": None}
 
-@lru_cache(maxsize=1)
-def load_prix_dvf() -> dict:
-    """Charge les prix DVF réels calibrés depuis data/prix_gex.json
-    (généré par scripts/process_dvf.py à partir des 658 transactions
-    réelles). Fallback vers un dict minimal si le fichier est introuvable."""
+
+def _load_prix_from_supabase() -> Optional[dict]:
+    """Interroge la vue v_prix_marche_appartements en direct sur Supabase.
+    Retourne None si Supabase n'est pas configuré ou injoignable — le
+    fallback local prend alors le relais (voir load_prix_dvf)."""
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        log.warning("SUPABASE_URL/SUPABASE_ANON_KEY non configurés — utilisation du fallback local")
+        return None
     try:
-        with open(PRIX_JSON_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        log.info(f"prix_gex.json chargé : {len(data)} communes")
+        resp = requests.get(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/v_prix_marche_appartements",
+            headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}"},
+            params={"select": "code_commune,nom_commune,prix_m2_median,nb_transactions"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if not rows:
+            log.warning("Supabase a répondu mais la vue est vide (pipeline pas encore exécuté ?)")
+            return None
+        data = {
+            str(r["code_commune"]): {
+                "commune": r["nom_commune"],
+                "prix_m2_median": r["prix_m2_median"],
+                "nb_transactions": r["nb_transactions"],
+            }
+            for r in rows
+        }
+        log.info(f"Prix chargés depuis Supabase (live) : {len(data)} communes")
         return data
     except Exception as e:
-        log.error(f"Impossible de charger data/prix_gex.json ({e}) — fallback utilisé")
-        return _PRIX_FALLBACK
+        log.error(f"Échec requête Supabase ({e}) — repli sur fallback local")
+        return None
+
+
+def load_prix_dvf() -> dict:
+    """Source de prix, dans l'ordre de préférence :
+    1. Supabase (v_prix_marche_appartements) — donnée live, cache 1h
+    2. data/prix_gex.json — snapshot local si Supabase indisponible
+    3. _PRIX_FALLBACK — dernier recours minimal
+    """
+    now = time.time()
+    if _prix_cache["data"] is not None and (now - _prix_cache["loaded_at"]) < PRIX_CACHE_TTL_SECONDS:
+        return _prix_cache["data"]
+
+    data = _load_prix_from_supabase()
+    source = "supabase_live"
+
+    if data is None:
+        try:
+            with open(PRIX_JSON_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            source = "json_snapshot_local"
+            log.info(f"prix_gex.json chargé (repli) : {len(data)} communes")
+        except Exception as e:
+            log.error(f"Impossible de charger data/prix_gex.json ({e}) — fallback minimal utilisé")
+            data = _PRIX_FALLBACK
+            source = "fallback_minimal"
+
+    _prix_cache["data"] = data
+    _prix_cache["loaded_at"] = now
+    _prix_cache["source"] = source
+    return data
 
 
 @lru_cache(maxsize=8)
@@ -224,7 +284,7 @@ async def health():
         checks["zone_config"] = f"ERREUR: {e}"
     try:
         prix = load_prix_dvf()
-        checks["prix_dvf"] = f"ok ({len(prix)} communes)"
+        checks["prix_dvf"] = f"ok ({len(prix)} communes, source={_prix_cache['source']})"
     except Exception as e:
         checks["prix_dvf"] = f"ERREUR: {e}"
     return {"status": "ok", "version": VERSION, "checks": checks}
