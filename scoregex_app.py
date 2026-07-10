@@ -474,7 +474,7 @@ with st.sidebar:
     <div style="font-size:0.72rem;color:#333;line-height:1.6;">
     Données DVF réelles<br>
     DGFiP 2014–2025<br>
-    658 transactions calibrées<br>
+    747 transactions calibrées<br>
     8 communes Pays de Gex
     </div>
     """), unsafe_allow_html=True)
@@ -498,7 +498,7 @@ if st.session_state.page == "home":
         </p>
         <div class="sg-stats-row">
             <div class="sg-stat">
-                <span class="sg-stat-num">658</span>
+                <span class="sg-stat-num">747</span>
                 <span class="sg-stat-lbl">Transactions réelles</span>
             </div>
             <div class="sg-stat">
@@ -595,7 +595,7 @@ elif st.session_state.page == "estimate":
     <div style="padding: 3rem 3rem 1rem;">
         <p class="sg-eyebrow">Moteur AVM</p>
         <h1 class="sg-section-title">Estimation quantitative</h1>
-        <p class="sg-section-sub">Calibré sur 658 transactions DVF réelles DGFiP 2014–2025</p>
+        <p class="sg-section-sub">Calibré sur 747 transactions DVF réelles DGFiP 2014–2025</p>
     </div>
     """), unsafe_allow_html=True)
     

@@ -12,8 +12,9 @@ Endpoints :
 * IMPORTANT — Honnêteté des données (principe "pas de donnée fictive") :
   - Frontalier (temps Genève, désert médical, bruit) : DONNÉES RÉELLES,
     calculées en direct via OSRM public + OSM Overpass à chaque requête.
-  - AVM Hédonique : DONNÉES RÉELLES — prix DVF calibrés (658 transactions
-    réelles 2014-2025) + coefficients hédoniques calibrés zone.
+  - AVM Hédonique : DONNÉES RÉELLES — prix DVF calibrés en direct via Supabase
+    (747 transactions Appartement réelles 2014-2025, mises à jour à chaque
+    vague DGFiP) + coefficients hédoniques calibrés zone.
   - Merton Jump-Diffusion : modèle stochastique RÉEL, calibré sur les
     paramètres de zone (mu, sigma, sauts).
   - ESG : SEULEMENT la composante DPE est réelle. Inondation, argile, NDVI,
