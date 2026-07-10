@@ -47,6 +47,7 @@ import os
 import sys
 import json
 import time
+import math
 import logging
 import concurrent.futures
 from functools import lru_cache
@@ -76,7 +77,7 @@ from engine.score_gexscore import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 
 app = FastAPI(
     title="GexScore API",
@@ -158,6 +159,59 @@ def _load_prix_from_supabase() -> Optional[dict]:
     except Exception as e:
         log.error(f"Échec requête Supabase ({e}) — repli sur fallback local")
         return None
+
+
+_regime_cache: dict = {"prob": None, "loaded_at": 0.0, "source": None}
+
+
+def _compute_regime_bull_prob() -> tuple:
+    """Calcule regime_bull_prob à partir de la vraie tendance DVF (vue
+    v_regime_marche : médiane 180j récents vs 180j précédents), au lieu
+    du biais fixe 0.58 trouvé le 10/07/2026 (zone_cfg["hmm"][...], jamais
+    mis à jour, gonflait chaque GexScore de ~70 points en permanence).
+
+    Retourne (probabilité, source) :
+      - "tendance_dvf_reelle" si le calcul a pu être fait (assez de données)
+      - "neutre_fallback" (0.5) sinon — JAMAIS de valeur inventée présentée
+        comme réelle.
+    """
+    now = time.time()
+    if _regime_cache["prob"] is not None and (now - _regime_cache["loaded_at"]) < PRIX_CACHE_TTL_SECONDS:
+        return _regime_cache["prob"], _regime_cache["source"]
+
+    prob, source = 0.5, "neutre_fallback"
+
+    if SUPABASE_URL and SUPABASE_ANON_KEY:
+        try:
+            resp = requests.get(
+                f"{SUPABASE_URL.rstrip('/')}/rest/v1/v_regime_marche",
+                headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}"},
+                params={"select": "n_recent,median_recent,n_prior,median_prior"},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+            if rows:
+                r = rows[0]
+                n_recent, n_prior = r.get("n_recent", 0), r.get("n_prior", 0)
+                med_recent, med_prior = r.get("median_recent"), r.get("median_prior")
+                # Seuil minimal : sous 10 transactions par fenêtre, le calcul
+                # n'est pas fiable statistiquement -> on reste neutre.
+                if n_recent >= 10 and n_prior >= 10 and med_recent and med_prior:
+                    growth = (med_recent - med_prior) / med_prior
+                    k = 8.0  # calibration : +10% sur 6 mois -> ~0.69, -10% -> ~0.31
+                    prob = 1.0 / (1.0 + math.exp(-k * growth))
+                    source = "tendance_dvf_reelle"
+                    log.info(f"Régime calculé depuis tendance DVF : croissance={growth*100:.1f}%, prob={prob:.3f}")
+                else:
+                    log.warning(f"Échantillon insuffisant pour le régime (n_recent={n_recent}, n_prior={n_prior}) — neutre")
+        except Exception as e:
+            log.error(f"Échec requête v_regime_marche ({e}) — repli neutre 0.5")
+
+    _regime_cache["prob"] = prob
+    _regime_cache["loaded_at"] = now
+    _regime_cache["source"] = source
+    return prob, source
 
 
 def load_prix_dvf() -> dict:
@@ -287,6 +341,11 @@ async def health():
         checks["prix_dvf"] = f"ok ({len(prix)} communes, source={_prix_cache['source']})"
     except Exception as e:
         checks["prix_dvf"] = f"ERREUR: {e}"
+    try:
+        prob, source = _compute_regime_bull_prob()
+        checks["regime_marche"] = f"ok (prob={prob:.3f}, source={source})"
+    except Exception as e:
+        checks["regime_marche"] = f"ERREUR: {e}"
     return {"status": "ok", "version": VERSION, "checks": checks}
 
 
@@ -350,9 +409,9 @@ async def estimate(req: EstimateRequest):
     #    Ce n'est PAS le modèle SAR/GWR complet prévu au roadmap (non construit).
     score_spatial = max(0.0, min(100.0, 50.0 + avm["total_ajustement_pct"]))
 
-    # ── 6. Régime HMM — PROXY statique (probabilité stationnaire "expansion"),
-    #    PAS une détection dynamique en temps réel (non construite à ce stade).
-    regime_bull_prob = zone_cfg["hmm"]["state_probs_stationary"][0]
+    # ── 6. Régime marché — RÉEL, tendance DVF 180j vs 180j précédents
+    #    (remplace l'ancien biais fixe 0.58 trouvé le 10/07/2026).
+    regime_bull_prob, regime_source = _compute_regime_bull_prob()
 
     # ── 7. Score composite [0-1000] ────────────────────────────────────────
     gexscore = compute_gexscore(
@@ -416,7 +475,7 @@ async def estimate(req: EstimateRequest):
             "frontalier": "timeout_fallback_neutre" if frontalier_timed_out else "temps_reel_osrm_osm_overpass",
             "esg": "partiel_dpe_reel_reste_defaut_zone_neutre_georisques_insee_ndvi_non_brancres",
             "score_spatial": "proxy_derive_avm_hedonique_pas_sar_gwr_complet",
-            "regime_hmm": "proxy_statique_probabilite_stationnaire_pas_detection_temps_reel",
+            "regime_marche": regime_source,
         },
     })
 
