@@ -508,4 +508,104 @@ async def estimate(req: EstimateRequest):
             "prix_estime_eur": avm["prix_estime_eur"],
             "prix_m2_estime": avm["prix_m2_estime"],
             "prix_m2_zone_median_dvf": prix_m2_zone,
-  
+            "donnees_dvf_a_jour_au": derniere_transaction,
+            "ajustement_dpe_pct": avm["ajustements"]["dpe"],
+            "ajustements_detail_pct": avm["ajustements"],
+            "surface_m2": req.surface_m2,
+        },
+        "merton": merton,
+        "frontalier": frontalier,
+        "esg": {
+            "esg_score": esg["esg_score"],
+            "esg_grade": esg["esg_grade"],
+        },
+        "deal_alert": deal,
+        "data_quality_notes": {
+            "frontalier": "timeout_fallback_neutre" if frontalier_timed_out else "temps_reel_osrm_osm_overpass",
+            "esg": "partiel_dpe_reel_reste_defaut_zone_neutre_georisques_insee_ndvi_non_brancres",
+            "score_spatial": "proxy_derive_avm_hedonique_pas_sar_gwr_complet",
+            "regime_marche": regime_source,
+            "donnees_dvf_a_jour_au": "reel_vue_supabase" if derniere_transaction else "indisponible_source_active_ne_l_expose_pas",
+        },
+    })
+
+
+def _supabase_headers_for_user(authorization: Optional[str]) -> dict:
+    """Construit les headers pour un appel Supabase exécuté AU NOM de
+    l'utilisateur final (RLS via son propre JWT), et non plus avec la clé
+    anon seule. `authorization` doit valoir "Bearer <jwt>" — c'est le JWT
+    renvoyé par Supabase Auth au moment de la connexion côté Streamlit.
+    C'est ce JWT (pas la clé anon) qui porte l'identité auth.uid() utilisée
+    par les policies RLS de estimations_sauvegardees. Sans lui : 401 net."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Authentification requise — connecte-toi (Authorization: Bearer <token>)")
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise HTTPException(status_code=503, detail="Supabase non configuré côté API")
+    return {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": authorization,
+        "Content-Type": "application/json",
+    }
+
+
+@app.post("/estimations/sauvegarder")
+async def sauvegarder_estimation(req: EstimationSaveRequest, authorization: Optional[str] = Header(None)):
+    """Enregistre une estimation dans le Dashboard (table
+    estimations_sauvegardees). user_id est rempli automatiquement côté base
+    (DEFAULT auth.uid()) à partir du JWT transmis — jamais fourni par le
+    client, pour qu'aucun appel ne puisse écrire dans le compte d'un autre
+    utilisateur (la RLS bloquerait de toute façon une tentative de ce genre,
+    mais on ne lui laisse même pas l'occasion)."""
+    headers = _supabase_headers_for_user(authorization)
+    headers["Prefer"] = "return=representation"
+    resp = None
+    try:
+        resp = requests.post(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/estimations_sauvegardees",
+            headers=headers,
+            json=req.model_dump(exclude_none=True),
+            timeout=8,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        return {"status": "ok", "id": rows[0]["id"] if rows else None}
+    except requests.HTTPError:
+        detail = resp.text[:300] if resp is not None else "erreur inconnue"
+        status = resp.status_code if resp is not None else 502
+        log.error(f"Échec sauvegarde estimation ({status}) — {detail}")
+        raise HTTPException(status_code=status if status in (401, 403) else 502, detail=f"Échec sauvegarde Supabase : {detail}")
+    except Exception as e:
+        log.error(f"Échec sauvegarde estimation ({e})")
+        raise HTTPException(status_code=502, detail=f"Échec sauvegarde Supabase : {e}")
+
+
+@app.get("/estimations")
+async def lister_estimations(authorization: Optional[str] = Header(None)):
+    """Liste les estimations sauvegardées de l'utilisateur authentifié.
+    Aucun paramètre d'identité côté requête : la RLS (auth.uid() = user_id)
+    filtre automatiquement selon le JWT transmis — impossible de lister les
+    biens d'un autre utilisateur même en modifiant l'appel côté client."""
+    headers = _supabase_headers_for_user(authorization)
+    resp = None
+    try:
+        resp = requests.get(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/estimations_sauvegardees",
+            headers=headers,
+            params={"select": "*", "order": "created_at.desc"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return {"status": "ok", "estimations": resp.json()}
+    except requests.HTTPError:
+        detail = resp.text[:300] if resp is not None else "erreur inconnue"
+        status = resp.status_code if resp is not None else 502
+        log.error(f"Échec listage estimations ({status}) — {detail}")
+        raise HTTPException(status_code=status if status in (401, 403) else 502, detail=f"Échec lecture Supabase : {detail}")
+    except Exception as e:
+        log.error(f"Échec listage estimations ({e})")
+        raise HTTPException(status_code=502, detail=f"Échec lecture Supabase : {e}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
