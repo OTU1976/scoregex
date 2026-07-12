@@ -1,0 +1,118 @@
+name: Sync DVF (vague DGFiP)
+
+# Objectif : synchroniser automatiquement les donnees de transactions
+# immobilieres (DVF+ open-data, Cerema) vers Supabase, deux fois par an,
+# au rythme des vagues officielles de publication DGFiP (avril / octobre).
+#
+# Historique : cette Action ne faisait a l'origine qu'ouvrir une issue de
+# rappel manuel. Depuis la confirmation de la source exacte
+# (https://explore.data.gouv.fr/fr/immobilier -> API DVF+ open-data du
+# Cerema, cf. scripts/sync_dvf_opendata.py), elle execute reellement la
+# synchronisation et ouvre/commente une issue avec le resultat -- succes ou
+# echec, jamais silencieux.
+
+on:
+  schedule:
+    - cron: "0 6 20 4,10 *"   # 20 avril et 20 octobre, 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: sync-dvf
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run DVF+ sync
+        id: sync
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -o pipefail
+          python scripts/sync_dvf_opendata.py 2>&1 | tee /tmp/sync_output.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Report result as GitHub issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const outcome = "${{ steps.sync.outcome }}";
+            const status = outcome === "success" ? "OK" : "ECHEC";
+            const year = new Date().getFullYear();
+            const month = new Date().getMonth() + 1 <= 6 ? "avril" : "octobre";
+            const title = `Sync DVF ${month} ${year} -- ${status}`;
+
+            let log = "";
+            try {
+              log = fs.readFileSync("/tmp/sync_output.log", "utf8");
+            } catch (e) {
+              log = "(pas de log capture : " + e.message + ")";
+            }
+            const lines = log.split("\n");
+            const tail = lines.slice(Math.max(0, lines.length - 60)).join("\n");
+
+            const body = [
+              `Resultat automatique de \`.github/workflows/dvf-reminder.yml\`.`,
+              ``,
+              `**Statut** : ${status}`,
+              `**Declenchement** : ${context.eventName}`,
+              ``,
+              `<details><summary>Dernieres lignes du log (60 max)</summary>`,
+              ``,
+              "```",
+              tail,
+              "```",
+              ``,
+              `</details>`
+            ].join("\n");
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: ["dvf-sync"]
+            });
+
+            const existing = issues.find(i => i.title === title);
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["dvf-sync"]
+              });
+            }
+
+      - name: Fail the run if sync failed
+        if: steps.sync.outcome != 'success'
+        run: |
+          echo "La synchronisation DVF+ a echoue -- voir l'issue creee/commentee ci-dessus pour le detail."
+          exit 1

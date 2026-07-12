@@ -1,0 +1,75 @@
+# .github/workflows/monitor-fallback.yml
+#
+# Alerte automatique si le pipeline Supabase tombe en repli JSON.
+#
+# Contexte technique important : l'API (api/main.py) tourne sur Vercel en
+# serverless. Un cold start reinitialise toute variable en memoire du
+# process Python, donc l'API elle-meme NE PEUT PAS suivre fiablement
+# "depuis combien de temps est-on en repli ?" - ce suivi doit vivre a
+# l'exterieur. Ce workflow fait tourner scripts/check_health_alert.py
+# toutes les 20 minutes ; le script persiste son etat dans
+# .monitor/repli_state.json, que ce workflow commite dans le repo pour que
+# l'etat survive entre deux executions (chaque run GitHub Actions demarre
+# sur une VM neuve, sans memoire de l'execution precedente - seul un fichier
+# commite dans le repo peut jouer ce role de memoire partagee simplement).
+#
+# Configuration requise (Settings > Secrets and variables > Actions) :
+#   - ALERT_WEBHOOK_URL (optionnel mais recommande) : URL de webhook a
+#     appeler en cas d'alerte. Compatible tel quel avec un webhook entrant
+#     Slack ({"text": "..."}) ; fonctionne aussi avec n8n/Zapier/Make en
+#     mode "catch raw JSON", ou tout autre service acceptant ce format.
+#     Sans ce secret, le script logue l'alerte (visible dans l'onglet
+#     Actions du repo) mais n'envoie rien.
+#
+# Le check ne modifie jamais le comportement de l'API elle-meme : il ne
+# fait qu'observer /health depuis l'exterieur.
+
+name: Monitor repli JSON
+
+on:
+  schedule:
+    # Toutes les 20 minutes. Cron GitHub Actions = UTC.
+    - cron: "*/20 * * * *"
+  workflow_dispatch: {}  # permet de lancer manuellement depuis l'onglet Actions
+
+permissions:
+  contents: write  # necessaire pour commiter .monitor/repli_state.json
+
+concurrency:
+  group: monitor-fallback
+  cancel-in-progress: false  # ne jamais annuler un run en cours au profit du suivant
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Check API health and alert if needed
+        env:
+          API_HEALTH_URL: "https://scoregex.vercel.app/health"
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          STATE_PATH: ".monitor/repli_state.json"
+          ALERT_THRESHOLD_S: "3600"
+        run: python scripts/check_health_alert.py
+
+      - name: Commit updated state (if changed)
+        run: |
+          git config user.name "scoregex-monitor-bot"
+          git config user.email "actions@users.noreply.github.com"
+          if ! git diff --quiet -- .monitor/repli_state.json; then
+            git add .monitor/repli_state.json
+            git commit -m "chore(monitor): update repli_state.json [skip ci]"
+            git push
+          else
+            echo "No state change, nothing to commit."
+          fi
