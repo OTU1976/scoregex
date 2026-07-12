@@ -32,6 +32,12 @@ Endpoints :
   - Régime HMM (bull/bear) : la détection dynamique de régime n'est pas
     construite. La probabilité stationnaire calibrée du régime "expansion"
     est utilisée comme proxy statique. Signalé dans `data_quality_notes`.
+  - Fraîcheur des données DVF : la date de la dernière transaction connue
+    (`derniere_transaction`, exposée par la vue Supabase
+    `v_prix_marche_appartements`) est renvoyée telle quelle. Si Supabase
+    n'est pas la source active (repli JSON/fallback) ou si le champ est
+    absent de la source active, `donnees_dvf_a_jour_au` est `null` — ne
+    JAMAIS inventer une date de fraîcheur.
 
 ⚠️ Risque opérationnel connu : le score Frontalier effectue jusqu'à 4 appels
    réseau externes séquentiels (OSRM + 3x OSM Overpass). Sur l'offre Vercel
@@ -57,7 +63,7 @@ from typing import Optional
 
 import yaml
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -78,7 +84,7 @@ from engine.score_gexscore import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.4.0"
+VERSION = "3.7.0"
 
 app = FastAPI(
     title="GexScore API",
@@ -113,6 +119,9 @@ PRIX_CACHE_TTL_SECONDS = 3600  # 1h — évite de taper Supabase à chaque requ�
 # 2) ce dict minimal, en tout dernier recours.
 # Ce n'est JAMAIS la source de vérité — la vraie donnée vient de Supabase
 # (table `biens`, alimentée par scripts/upload_dvf_to_supabase.py).
+# NB : ces deux filets n'ont pas de `derniere_transaction` fiable -> le champ
+# est absent (`.get()` renvoie None), et `donnees_dvf_a_jour_au` reste `null`
+# dans la réponse plutôt que d'afficher une date non vérifiée.
 _PRIX_FALLBACK = {
     "01071": {"commune": "Cessy", "prix_m2_median": 4959},
     "01160": {"commune": "Ferney-Voltaire", "prix_m2_median": 4951},
@@ -131,7 +140,11 @@ _prix_cache: dict = {"data": None, "loaded_at": 0.0, "source": None}
 def _load_prix_from_supabase() -> Optional[dict]:
     """Interroge la vue v_prix_marche_appartements en direct sur Supabase.
     Retourne None si Supabase n'est pas configuré ou injoignable — le
-    fallback local prend alors le relais (voir load_prix_dvf)."""
+    fallback local prend alors le relais (voir load_prix_dvf).
+
+    Inclut `derniere_transaction` (date de la transaction DVF la plus
+    récente connue pour la commune) — champ ajouté au select le 10/07/2026
+    pour exposer l'indicateur de fraîcheur des données côté /estimate."""
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
         log.warning("SUPABASE_URL/SUPABASE_ANON_KEY non configurés — utilisation du fallback local")
         return None
@@ -139,7 +152,7 @@ def _load_prix_from_supabase() -> Optional[dict]:
         resp = requests.get(
             f"{SUPABASE_URL.rstrip('/')}/rest/v1/v_prix_marche_appartements",
             headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}"},
-            params={"select": "code_commune,nom_commune,prix_m2_median,nb_transactions"},
+            params={"select": "code_commune,nom_commune,prix_m2_median,nb_transactions,derniere_transaction"},
             timeout=5,
         )
         resp.raise_for_status()
@@ -152,6 +165,7 @@ def _load_prix_from_supabase() -> Optional[dict]:
                 "commune": r["nom_commune"],
                 "prix_m2_median": r["prix_m2_median"],
                 "nb_transactions": r["nb_transactions"],
+                "derniere_transaction": r.get("derniere_transaction"),
             }
             for r in rows
         }
@@ -257,12 +271,15 @@ def get_zone_config(zone_id: str) -> dict:
 
 
 def get_prix_m2(commune: Optional[str]):
+    """Retourne (prix_m2_median, nom_commune, derniere_transaction).
+    `derniere_transaction` est None si la source active ne l'expose pas
+    (fallback JSON/minimal) — jamais de date inventée."""
     prix_dvf = load_prix_dvf()
     if commune:
         for code, d in prix_dvf.items():
             if d["commune"].lower() in commune.lower():
-                return d["prix_m2_median"], d["commune"]
-    return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex")
+                return d["prix_m2_median"], d["commune"], d.get("derniere_transaction")
+    return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None
 
 
 def _frontalier_with_timeout(lat: float, lon: float, zone_cfg: dict, budget_s: float = 5.0):
@@ -314,6 +331,30 @@ class EstimateRequest(BaseModel):
     ecole_intl_500m: Optional[bool] = False     # Déclaratif — pas de filtrage OSM par nom d'école
 
 
+class EstimationSaveRequest(BaseModel):
+    """Payload du Dashboard (bouton 'Enregistrer au dashboard').
+
+    Aucun champ d'identité ici — l'utilisateur est identifié par son JWT
+    Supabase Auth (header Authorization), vérifié par Supabase lui-même
+    (PostgREST) et appliqué via RLS (auth.uid() = user_id) côté base de
+    données. Voir db/004_estimations_sauvegardees.sql. La colonne user_id
+    est remplie automatiquement par la base (DEFAULT auth.uid()) — l'API ne
+    la définit jamais elle-même, pour qu'aucun code applicatif ne puisse
+    usurper l'identité d'un autre utilisateur."""
+    commune: Optional[str] = None
+    adresse: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    surface_m2: Optional[float] = None
+    dpe_note: Optional[str] = None
+    prix_estime_eur: Optional[float] = None
+    prix_m2_estime: Optional[float] = None
+    gexscore: Optional[float] = None
+    grade: Optional[str] = None
+    prix_annonce_eur: Optional[float] = None
+    is_deal: Optional[bool] = None
+
+
 @app.get("/")
 async def root():
     return {
@@ -330,7 +371,13 @@ async def root():
 async def health():
     """Vérifie le chargement effectif du moteur (config YAML + prix DVF).
     Utile pour diagnostiquer un problème de bundling Vercel sans passer
-    par /estimate (qui ferait des appels réseau externes)."""
+    par /estimate (qui ferait des appels réseau externes).
+
+    NB : c'est aussi l'endpoint interrogé par le monitoring externe
+    (.github/workflows/monitor-fallback.yml) qui alerte si `prix_dvf` reste
+    en repli (source != supabase_live) plus d'1h — voir ce workflow pour le
+    détail, l'état de repli ne peut pas être suivi ici en mémoire (Vercel
+    serverless = pas d'état persistant entre invocations)."""
     checks = {}
     try:
         get_zone_config("gex_001")
@@ -362,7 +409,7 @@ async def prix_marche():
 @app.post("/estimate")
 async def estimate(req: EstimateRequest):
     zone_cfg = get_zone_config(req.zone_id)
-    prix_m2_zone, commune_nom = get_prix_m2(req.commune)
+    prix_m2_zone, commune_nom, derniere_transaction = get_prix_m2(req.commune)
     dpe = (req.dpe_note or "D").upper()
     age_bien = (2026 - req.annee_construction) if req.annee_construction else 20  # 20 = neutre (0% ajust.)
 
@@ -461,26 +508,4 @@ async def estimate(req: EstimateRequest):
             "prix_estime_eur": avm["prix_estime_eur"],
             "prix_m2_estime": avm["prix_m2_estime"],
             "prix_m2_zone_median_dvf": prix_m2_zone,
-            "ajustement_dpe_pct": avm["ajustements"]["dpe"],
-            "ajustements_detail_pct": avm["ajustements"],
-            "surface_m2": req.surface_m2,
-        },
-        "merton": merton,
-        "frontalier": frontalier,
-        "esg": {
-            "esg_score": esg["esg_score"],
-            "esg_grade": esg["esg_grade"],
-        },
-        "deal_alert": deal,
-        "data_quality_notes": {
-            "frontalier": "timeout_fallback_neutre" if frontalier_timed_out else "temps_reel_osrm_osm_overpass",
-            "esg": "partiel_dpe_reel_reste_defaut_zone_neutre_georisques_insee_ndvi_non_brancres",
-            "score_spatial": "proxy_derive_avm_hedonique_pas_sar_gwr_complet",
-            "regime_marche": regime_source,
-        },
-    })
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+  
