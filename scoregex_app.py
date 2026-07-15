@@ -1,7 +1,7 @@
 """
 ScoreGex — Plateforme Quantitative d'Évaluation Immobilière
 Pays de Gex — Genève Frontalier
-Design : noir #0F241A + or #4FA37A + blanc cassé #F5F0E8
+Design : noir #0F241A + vert #4FA37A + blanc cassé #F5F0E8
 """
 
 import streamlit as st
@@ -10,6 +10,8 @@ import json
 import time
 import io
 import csv
+# reportlab : ajouté 15/07/2026 pour la génération réelle des rapports PDF
+# (voir generer_rapport_pdf plus bas) — dépendance déclarée dans requirements.txt
 
 # ── Config page ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -76,6 +78,187 @@ def geocode_adresse(query: str, limit: int = 5):
         return results
     except Exception:
         return []
+
+
+# ── Rapport PDF (B2C + B2B "branded") ──────────────────────────────────────
+# MODIF 15/07/2026 : "Rapport PDF téléchargeable" (plan Frontalier Pro) et
+# "Rapport PDF branded" (plan B2B Agences) étaient promis sur la page Tarifs
+# mais AUCUN code de génération n'existait -- fonctionnalité facturée mais
+# absente. Construit ici avec reportlab, à partir UNIQUEMENT des champs
+# réellement renvoyés par POST /estimate (aucune donnée fictive : si un champ
+# est absent de la réponse API, il est simplement omis du PDF, jamais inventé).
+_MARINE = None  # placeholders remplis après import reportlab, voir plus bas
+
+
+def generer_rapport_pdf(res: dict, contexte: dict, branded: bool = False) -> bytes:
+    """Construit un rapport PDF a partir d'une reponse reelle de /estimate.
+
+    res       : dict brut renvoye par POST /estimate (gexscore, avm, merton,
+                frontalier, esg, deal_alert, data_quality_notes...).
+    contexte  : {"commune", "adresse", "surface_m2", "dpe_note", "prix_annonce"}
+                saisis par l'utilisateur, pour l'en-tete du rapport.
+    branded   : False -> rapport B2C simple (1 page, sobre).
+                True  -> "Rapport de Négociation" B2B (plus détaillé, notes de
+                qualité de donnée incluses -- jamais présenté comme plus
+                "certain" que les données sous-jacentes ne le sont vraiment).
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.colors import HexColor
+    from reportlab.pdfgen import canvas as _canvas
+
+    VERT_FONCE = HexColor("#0F241A")
+    VERT = HexColor("#4FA37A")
+    BLANC = HexColor("#F5F0E8")
+    GRIS = HexColor("#555555")
+
+    buf = io.BytesIO()
+    c = _canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    gs = res.get("gexscore", {}) or {}
+    avm = res.get("avm", {}) or {}
+    deal = res.get("deal_alert")
+    dqn = res.get("data_quality_notes", {}) or {}
+
+    score = gs.get("score", 0) or 0
+    grade = gs.get("grade", "—")
+    action = gs.get("action", "—")
+    prix_estime = avm.get("prix_estime_eur", 0) or 0
+    prix_m2 = avm.get("prix_m2_estime", 0) or 0
+    prix_m2_dvf = avm.get("prix_m2_zone_median_dvf", 0) or 0
+    fraicheur = avm.get("donnees_dvf_a_jour_au")
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    c.setFillColor(VERT_FONCE)
+    c.rect(0, height - 110, width, 110, fill=1, stroke=0)
+    c.setFillColor(VERT)
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(40, height - 55, "ScoreGex")
+    c.setFillColor(BLANC)
+    c.setFont("Helvetica", 11)
+    titre_rapport = "Rapport de Négociation Immobilière" if branded else "Rapport d'Estimation"
+    c.drawString(40, height - 75, titre_rapport)
+    c.setFont("Helvetica", 8)
+    c.setFillColor(HexColor("#9ab8a8"))
+    c.drawString(40, height - 92, f"Généré le {time.strftime('%d/%m/%Y')} — Steelldy SAS — Données DVF réelles DGFiP 2014-2025")
+
+    y = height - 150
+
+    # ── Bien concerné ───────────────────────────────────────────────────────
+    c.setFillColor(VERT_FONCE)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "BIEN CONCERNÉ")
+    y -= 20
+    c.setFont("Helvetica", 10)
+    c.setFillColor(HexColor("#1A1A1A"))
+    infos_bien = [
+        f"Commune : {contexte.get('commune') or 'Pays de Gex'}",
+        f"Adresse : {contexte.get('adresse') or 'non renseignée'}",
+        f"Surface : {contexte.get('surface_m2', '—')} m²",
+        f"DPE : {contexte.get('dpe_note', '—')}",
+    ]
+    if contexte.get("prix_annonce"):
+        infos_bien.append(f"Prix annoncé : {contexte['prix_annonce']:,.0f} EUR".replace(",", " "))
+    for ligne in infos_bien:
+        c.drawString(40, y, ligne)
+        y -= 15
+
+    y -= 15
+
+    # ── GexScore ─────────────────────────────────────────────────────────────
+    c.setFillColor(VERT_FONCE)
+    c.setFont("Helvetica-Bold", 36)
+    c.drawString(40, y, f"GexScore : {score:.0f} / 1000")
+    y -= 20
+    c.setFont("Helvetica", 11)
+    c.setFillColor(VERT)
+    c.drawString(40, y, f"{grade} — {action}")
+    y -= 35
+
+    # ── Bloc chiffres clés ───────────────────────────────────────────────────
+    c.setStrokeColor(HexColor("#DDDDDD"))
+    c.line(40, y, width - 40, y)
+    y -= 25
+    lignes_chiffres = [
+        ("Estimation ScoreGex (AVM)", f"{prix_estime:,.0f} EUR".replace(",", " ")),
+        ("Prix / m² estimé", f"{prix_m2:,.0f} EUR/m²".replace(",", " ")),
+        ("Médiane DVF de la zone", f"{prix_m2_dvf:,.0f} EUR/m²".replace(",", " ")),
+    ]
+    if fraicheur:
+        lignes_chiffres.append(("Données DVF à jour au", str(fraicheur)))
+    for label, valeur in lignes_chiffres:
+        c.setFont("Helvetica-Bold", 10)
+        c.setFillColor(GRIS)
+        c.drawString(40, y, label)
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(VERT_FONCE)
+        c.drawRightString(width - 40, y, valeur)
+        y -= 22
+
+    # ── Deal Alert ───────────────────────────────────────────────────────────
+    if deal:
+        y -= 10
+        is_deal = deal.get("is_deal", False)
+        disc = deal.get("discount_pct", 0) or 0
+        eco = deal.get("economie_potentielle_eur", 0) or 0
+        c.setFillColor(VERT if is_deal else HexColor("#EEEEEE"))
+        c.rect(40, y - 45, width - 80, 45, fill=1, stroke=0)
+        c.setFillColor(VERT_FONCE if is_deal else HexColor("#555555"))
+        c.setFont("Helvetica-Bold", 11)
+        if is_deal:
+            c.drawString(50, y - 20, f"DEAL ALERT : {abs(disc):.1f}% sous le marché")
+            c.setFont("Helvetica", 9)
+            c.drawString(50, y - 35, f"Économie potentielle estimée : {eco:,.0f} EUR".replace(",", " "))
+        else:
+            c.drawString(50, y - 25, "Prix annoncé cohérent avec le marché DVF (pas de décote significative détectée)")
+        y -= 60
+
+    # ── Recommandation de négociation (branded / B2B uniquement) ────────────
+    if branded and prix_estime:
+        marge = prix_estime * 0.03
+        y -= 5
+        c.setFillColor(VERT_FONCE)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(40, y, "RECOMMANDATION DE NÉGOCIATION")
+        y -= 18
+        c.setFont("Helvetica", 10)
+        c.setFillColor(HexColor("#1A1A1A"))
+        c.drawString(40, y, f"Fourchette suggérée : {prix_estime - marge:,.0f} EUR à {prix_estime + marge:,.0f} EUR".replace(",", " "))
+        y -= 15
+        c.setFont("Helvetica-Oblique", 8)
+        c.setFillColor(GRIS)
+        c.drawString(40, y, "(+/- 3% autour de l'estimation AVM — fourchette indicative, pas une garantie de négociation)")
+        y -= 25
+
+    # ── Transparence sur la qualité des données (toujours affichée) ─────────
+    if dqn:
+        c.setFillColor(GRIS)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(40, y, "NOTES DE QUALITÉ DES DONNÉES (transparence ScoreGex) :")
+        y -= 12
+        c.setFont("Helvetica", 7)
+        libelle_dqn = {
+            "frontalier": "Score Frontalier",
+            "esg": "Score ESG",
+            "score_spatial": "Score spatial",
+            "regime_marche": "Régime de marché",
+            "donnees_dvf_a_jour_au": "Fraîcheur DVF",
+        }
+        for cle, valeur in dqn.items():
+            if y < 60:
+                break
+            c.drawString(40, y, f"— {libelle_dqn.get(cle, cle)} : {valeur}")
+            y -= 10
+
+    # ── Footer ───────────────────────────────────────────────────────────────
+    c.setFillColor(GRIS)
+    c.setFont("Helvetica", 7)
+    c.drawString(40, 30, "ScoreGex — Steelldy SAS — Source : DVF DGFiP (data.gouv.fr) — www.scoregex.com")
+
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
 
 def html_block(s: str) -> str:
     """Supprime l'indentation Python de chaque ligne avant de passer le HTML
@@ -216,6 +399,48 @@ div.st-key-footernav a[kind="secondary"], div.st-key-footernav .stLinkButton a {
 div.st-key-footernav a[kind="secondary"]:hover, div.st-key-footernav .stLinkButton a:hover {
     color: #4FA37A !important;
 }
+
+/* MODIF 15/07/2026 : refonte du nav sidebar -- l'ancien CSS global
+   .stButton button (rectangles verts pleins, uppercase, identiques pour
+   TOUT bouton du site) rendait la sidebar datee ("Helen : design 2001").
+   Nav scopee dans st.container(key="sidenav") : items fantomes (ghost),
+   accent a gauche + fond teinte au survol, page active mise en avant via
+   type="primary" (rendu different du type="secondary" par defaut). */
+div.st-key-sidenav .stButton button[kind="secondary"] {
+    background: transparent !important;
+    color: #9ab8a8 !important;
+    border: none !important;
+    border-left: 3px solid transparent !important;
+    box-shadow: none !important;
+    text-transform: none !important;
+    letter-spacing: 0.02em !important;
+    font-weight: 500 !important;
+    text-align: left !important;
+    border-radius: 0 6px 6px 0 !important;
+    padding: 0.65rem 0.9rem !important;
+    margin-bottom: 0.15rem !important;
+    transition: all 0.15s ease !important;
+}
+div.st-key-sidenav .stButton button[kind="secondary"]:hover {
+    background: rgba(79,163,122,0.10) !important;
+    border-left-color: #2C4C38 !important;
+    color: #F5F0E8 !important;
+}
+div.st-key-sidenav .stButton button[kind="primary"] {
+    background: rgba(79,163,122,0.14) !important;
+    color: #F5F0E8 !important;
+    border: none !important;
+    border-left: 3px solid #4FA37A !important;
+    box-shadow: none !important;
+    text-transform: none !important;
+    letter-spacing: 0.02em !important;
+    font-weight: 700 !important;
+    text-align: left !important;
+    border-radius: 0 6px 6px 0 !important;
+    padding: 0.65rem 0.9rem !important;
+    margin-bottom: 0.15rem !important;
+}
+div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
 
 /* Bannière d'avertissement sur les pages legales (brouillon, pas relu par un juriste) */
 .sg-legal-disclaimer {
@@ -632,16 +857,27 @@ with st.container(key="topnav"):
 # ── Sidebar navigation ────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### Navigation")
-    if st.button("🏛️  Accueil", use_container_width=True):
-        st.session_state.page = "home"
-    if st.button("📊  Estimer un bien", use_container_width=True):
-        st.session_state.page = "estimate"
-    if st.button("📈  Prix du marché", use_container_width=True):
-        st.session_state.page = "market"
-    if st.button("💳  Tarifs", use_container_width=True):
-        st.session_state.page = "pricing"
-    if st.button("📁  Dashboard B2B", use_container_width=True):
-        st.session_state.page = "dashboard"
+    # MODIF 15/07/2026 : nav scopee (voir CSS div.st-key-sidenav) + bouton
+    # de la page active rendu en type="primary" pour le distinguer visuellement
+    # des autres (accent vert a gauche), au lieu de 5 rectangles identiques.
+    with st.container(key="sidenav"):
+        _nav_items = [
+            ("🏛️  Accueil", "home"),
+            ("📊  Estimer un bien", "estimate"),
+            ("📈  Prix du marché", "market"),
+            ("💳  Tarifs", "pricing"),
+            ("📁  Dashboard B2B", "dashboard"),
+        ]
+        for _label, _target in _nav_items:
+            _is_active = st.session_state.page == _target
+            if st.button(
+                _label,
+                use_container_width=True,
+                type="primary" if _is_active else "secondary",
+                key=f"nav_{_target}",
+            ):
+                st.session_state.page = _target
+                st.rerun()
 
     st.markdown("---")
     st.markdown("### Compte")
@@ -735,8 +971,9 @@ if st.session_state.page == "home":
             L'immobilier du Pays de Gex<br>est un <em>dérivé du Franc Suisse</em>
         </h1>
         <p class="sg-sub">
-            127 modèles calibrés sur les transactions DVF réelles 2014–2025.
-            Le seul AVM qui intègre le différentiel CHF/EUR,
+            AVM Hédonique + Merton Jump-Diffusion + Score Frontalier CHF/EUR,
+            calibrés sur 115 paramètres de zone et les transactions DVF réelles 2014–2025.
+            Le seul moteur qui intègre le différentiel CHF/EUR,
             le désert médical, et la donnée frontalière genevoise.
         </p>
         <div class="sg-stats-row">
@@ -1024,6 +1261,51 @@ elif st.session_state.page == "estimate":
                         </div>
                     </div>
                     """), unsafe_allow_html=True)
+
+            # Rapport PDF — MODIF 15/07/2026 : "Rapport PDF téléchargeable" (Frontalier
+            # Pro) et "Rapport PDF branded" (B2B Agences) étaient promis sur la page
+            # Tarifs sans code derrière. Génération réelle ici, à partir de `res`
+            # (réponse /estimate déjà en mémoire) — aucune donnée inventée.
+            st.markdown('<div class="sg-input-section" style="margin-top:1rem;">', unsafe_allow_html=True)
+            st.markdown('<div class="sg-input-title">Rapport PDF</div>', unsafe_allow_html=True)
+            _contexte_pdf = {
+                "commune": commune,
+                "adresse": adresse_query,
+                "surface_m2": surface,
+                "dpe_note": dpe,
+                "prix_annonce": prix_annonce if prix_annonce > 0 else None,
+            }
+            col_pdf1, col_pdf2 = st.columns(2)
+            with col_pdf1:
+                try:
+                    _pdf_simple = generer_rapport_pdf(res, _contexte_pdf, branded=False)
+                    st.download_button(
+                        "📄 Rapport simple (PDF)",
+                        data=_pdf_simple,
+                        file_name=f"scoregex_rapport_{commune.lower().replace(' ', '_')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="btn_pdf_simple",
+                    )
+                except Exception as e:
+                    st.error(f"Génération PDF impossible : {e}")
+            with col_pdf2:
+                if not st.session_state.get("auth"):
+                    st.caption("Rapport de Négociation (B2B) : réservé aux comptes Pro — connecte-toi.")
+                else:
+                    try:
+                        _pdf_branded = generer_rapport_pdf(res, _contexte_pdf, branded=True)
+                        st.download_button(
+                            "📁 Rapport de Négociation (PDF)",
+                            data=_pdf_branded,
+                            file_name=f"scoregex_negociation_{commune.lower().replace(' ', '_')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="btn_pdf_branded",
+                        )
+                    except Exception as e:
+                        st.error(f"Génération PDF impossible : {e}")
+            st.markdown('</div>', unsafe_allow_html=True)
 
             # Dashboard — sauvegarde optionnelle du bien estimé (nécessite un compte)
             st.markdown('<div class="sg-input-section" style="margin-top:1rem;">', unsafe_allow_html=True)
