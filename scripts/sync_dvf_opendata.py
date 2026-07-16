@@ -83,7 +83,9 @@ COMMUNES_GEX = {
     "01071": "Cessy",
     "01160": "Ferney-Voltaire",
     "01173": "Gex",
-    "01313": "Prevessin-Moens",
+    "01313": "Prévessin-Moëns",  # CORRIGE le 16/07/2026 : orthographe sans accents causait un
+                                 # doublon dans v_prix_marche_appartements (GROUP BY nom_commune)
+                                 # face au pipeline CSV legacy qui utilise l'orthographe correcte.
     "01281": "Ornex",
     "01354": "Saint-Genis-Pouilly",
     "01401": "Sergy",
