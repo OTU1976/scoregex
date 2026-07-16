@@ -94,8 +94,17 @@ app = FastAPI(
         "Steelldy SAS."
     ),
     version=VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # DESACTIVE le 16/07/2026 (decision Helen) : /docs et /redoc exposaient
+    # une console interactive publique ("Try it out") permettant a n'importe
+    # qui d'appeler POST /estimate -- le vrai moteur GexScore/AVM -- gratuit-
+    # ement et sans limite, en contournant totalement l'app Streamlit et les
+    # futurs tarifs B2B. openapi_url desactive aussi : sinon le schema JSON
+    # complet (tous les endpoints + schemas de donnees) restait recuperable
+    # directement meme sans l'interface Swagger/ReDoc. A reactiver le jour ou
+    # un vrai systeme de cles API B2B (avec quota/facturation) sera construit.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_middleware(
