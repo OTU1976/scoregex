@@ -51,7 +51,7 @@ COMMUNES_GEX = {
     "01071": "Cessy",
     "01160": "Ferney-Voltaire",
     "01173": "Gex",
-    "01313": "Prevessin-Moens",
+    "01313": "Prévessin-Moëns",
     "01281": "Ornex",
     "01354": "Saint-Genis-Pouilly",
     "01401": "Sergy",
@@ -59,6 +59,19 @@ COMMUNES_GEX = {
 }
 
 BATCH_SIZE = 200
+
+# Colonnes DVF identifiantes qui NE DOIVENT JAMAIS être interprétées comme
+# des nombres par pandas (voir data_quality_notes point 3 en bas de ce
+# fichier : "000001" lu sans dtype=str devient l'entier 1, "01173" devient
+# 1173 -- deux bugs de zero-padding réels découverts le 16/07/2026 lors du
+# calibrage du modèle maison).
+ID_COLUMNS_AS_STR = {
+    "id_mutation": str,
+    "numero_disposition": str,
+    "id_parcelle": str,
+    "code_commune": str,
+    "code_postal": str,
+}
 
 
 def load_and_aggregate() -> pd.DataFrame:
@@ -75,6 +88,18 @@ def load_and_aggregate() -> pd.DataFrame:
     type_local) et SOMMER les surfaces avant de calculer le prix/m2.
     Validé manuellement : ce problème touchait 46 dispositions sur 1094
     dans le jeu de données Pays de Gex (vérifié le 09/07/2026).
+
+    surface_terrain (16/07/2026) : le CSV DVF contient une colonne
+    surface_terrain (superficie du terrain en m2) qui existait déjà dans
+    les données brutes mais n'était jusqu'ici jamais extraite. DVF répète
+    aussi cette valeur sur plusieurs lignes quand une parcelle a plusieurs
+    "natures de culture" (ex: sol + jardin) -- même logique de somme que
+    pour surface_reelle_bati. On utilise sum(min_count=1) pour distinguer
+    "terrain=0" (jamais vrai en pratique) de "terrain inconnu" (NaN) :
+    min_count=1 fait qu'un groupe où TOUTES les valeurs sont NaN retourne
+    NaN plutôt que 0.0 (comportement par défaut de pandas .sum() qu'il
+    aurait fallu éviter ici -- une maison sans donnée de terrain doit
+    rester NULL, jamais 0).
     """
     all_dfs = []
     for code, nom in COMMUNES_GEX.items():
@@ -82,7 +107,7 @@ def load_and_aggregate() -> pd.DataFrame:
         if not path.exists():
             log.warning(f"Fichier manquant, ignoré : {path}")
             continue
-        df = pd.read_csv(path, sep=",", low_memory=False)
+        df = pd.read_csv(path, sep=",", low_memory=False, dtype=ID_COLUMNS_AS_STR)
         df["code_insee_zone"] = code
         all_dfs.append(df)
 
@@ -92,9 +117,17 @@ def load_and_aggregate() -> pd.DataFrame:
     df = pd.concat(all_dfs, ignore_index=True)
     log.info(f"Lignes brutes chargées : {len(df)}")
 
+    # Filet de sécurité : re-forcer le zero-padding même si une source CSV
+    # future arrive déjà "numérisée" (ex: export Excel qui aurait mangé les
+    # zéros). id_mutation n'est PAS re-paddé (format "AAAA-N" libre, pas de
+    # largeur fixe standard).
+    df["numero_disposition"] = df["numero_disposition"].str.zfill(6)
+    df["code_commune"] = df["code_commune"].str.zfill(5)
+
     df = df[df["nature_mutation"] == "Vente"].copy()
     df["valeur_fonciere"] = pd.to_numeric(df["valeur_fonciere"], errors="coerce")
     df["surface_reelle_bati"] = pd.to_numeric(df["surface_reelle_bati"], errors="coerce")
+    df["surface_terrain"] = pd.to_numeric(df.get("surface_terrain"), errors="coerce")
     df = df[(df["valeur_fonciere"] > 0) & (df["surface_reelle_bati"] > 0)]
 
     group_cols = [
@@ -104,6 +137,7 @@ def load_and_aggregate() -> pd.DataFrame:
     ]
     agg = df.groupby(group_cols, dropna=False, as_index=False).agg(
         surface_reelle_bati=("surface_reelle_bati", "sum"),
+        surface_terrain=("surface_terrain", lambda s: s.sum(min_count=1)),
         valeur_fonciere=("valeur_fonciere", "first"),
         nombre_pieces=("nombre_pieces_principales", "first"),
     )
@@ -120,7 +154,10 @@ def load_and_aggregate() -> pd.DataFrame:
         raise ValueError(f"{dup} doublons restants, upload annulé par sécurité")
 
     n_appart = len(agg[agg["type_local"] == "Appartement"])
-    log.info(f"Dont Appartements (périmètre produit actuel) : {n_appart}")
+    n_maison = len(agg[agg["type_local"] == "Maison"])
+    n_maison_avec_terrain = len(agg[(agg["type_local"] == "Maison") & (agg["surface_terrain"].notna())])
+    log.info(f"Dont Appartements : {n_appart}")
+    log.info(f"Dont Maisons : {n_maison} (dont {n_maison_avec_terrain} avec surface_terrain renseignée)")
 
     return agg
 
@@ -138,6 +175,7 @@ def to_supabase_rows(df: pd.DataFrame) -> list[dict]:
             "nom_commune": str(r["nom_commune"]),
             "type_local": str(r["type_local"]),
             "surface_reelle_bati": float(r["surface_reelle_bati"]),
+            "surface_terrain": float(r["surface_terrain"]) if pd.notna(r["surface_terrain"]) else None,
             "nombre_pieces": int(r["nombre_pieces"]) if pd.notna(r["nombre_pieces"]) else None,
             "valeur_fonciere": float(r["valeur_fonciere"]),
             "prix_m2": round(float(r["prix_m2"]), 2),
@@ -212,6 +250,25 @@ if __name__ == "__main__":
 # 2. DVF répète la valeur_fonciere sur plusieurs lignes pour les
 #    dispositions portant sur plusieurs locaux (ex: appart + cave).
 #    → Corrigé par agrégation (somme des surfaces) avant calcul du prix/m2.
+#
+# 3. [16/07/2026] BUG DECOUVERT : numero_disposition et code_commune sont
+#    des chaînes zero-paddées dans le CSV ("000001", "01173") mais
+#    pandas.read_csv() sans dtype explicite les interprète comme des
+#    entiers ("1", "1173"), faisant perdre le padding. Ce bug était déjà
+#    entré en production : la migration Supabase du 16/07/2026
+#    (fix_code_commune_padding_and_accent_split) a dû re-padder 1064
+#    lignes a posteriori pour merger les communes dédoublées sur la page
+#    Marché. Corrigé ici à la source via dtype=ID_COLUMNS_AS_STR +
+#    .str.zfill() défensif, pour que ce bug ne revienne jamais lors d'un
+#    futur re-run de ce script.
+#
+# 4. [16/07/2026] surface_terrain : colonne DVF présente depuis le début
+#    dans data/*.csv mais jamais extraite. Ajoutée ici (agrégée par somme,
+#    NULL si aucune valeur connue plutôt que 0). Backfill ponctuel des 265
+#    lignes Maison déjà en base effectué directement via Supabase MCP le
+#    16/07/2026 (198/265 lignes enrichies — 67 mutations sans donnée
+#    surface_terrain dans le CSV source, laissées NULL en toute honnêteté
+#    plutôt que fabriquées).
 #
 # Résultat validé le 09/07/2026 : 1064 transactions totales (toutes
 # catégories), dont 747 Appartements — contre 658 dans l'ancienne
