@@ -91,10 +91,43 @@ COMMUNES_GEX = {
 }
 
 PAGE_SIZE = 500
-REQUEST_TIMEOUT_S = 30
+REQUEST_TIMEOUT_S = 60  # AUGMENTE le 16/07/2026 (etait 30s) -- voir MAX_RETRIES ci-dessous
 SLEEP_BETWEEN_PAGES_S = 0.3  # etre poli avec une API publique gratuite
 ANNEEMUT_MIN = 2014
 BATCH_SIZE = 200  # pour l'upload Supabase, meme convention que l'ancien script
+
+# AJOUTE le 16/07/2026 : deux echecs reproductibles en conditions reelles
+# (ReadTimeout apres 30s sur apidf-preprod.cerema.fr, deux runs consecutifs
+# du 16/07/2026, cf. GitHub Actions run #29509158572) ont montre que cette
+# API "preprod" (donc par nature moins stable qu'un environnement de
+# production) peut etre lente ou momentanement indisponible. Comme ce
+# script tourne sans supervision humaine (2 fois par an via dvf-reminder.yml),
+# on ajoute un retry avec backoff exponentiel plutot que de laisser un simple
+# ralentissement reseau faire echouer toute la synchronisation.
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE_S = 5
+
+
+def _get_with_retry(url: str, params: Optional[dict], timeout: int) -> "requests.Response":
+    """GET avec retry (backoff exponentiel : 5s, 10s, 20s) sur timeout ou
+    erreur de connexion. Voir commentaire MAX_RETRIES ci-dessus pour le
+    contexte (echecs reproductibles observes le 16/07/2026)."""
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_exc = e
+            if attempt < MAX_RETRIES:
+                wait_s = RETRY_BACKOFF_BASE_S * (2 ** (attempt - 1))
+                log.warning(f"  Tentative {attempt}/{MAX_RETRIES} echouee ({e.__class__.__name__}: {e}), nouvel essai dans {wait_s}s...")
+                time.sleep(wait_s)
+            else:
+                log.error(f"  Echec definitif apres {MAX_RETRIES} tentatives : {e}")
+    assert last_exc is not None
+    raise last_exc
 
 
 def fetch_commune_mutations(code_insee: str) -> list[dict]:
@@ -114,8 +147,7 @@ def fetch_commune_mutations(code_insee: str) -> list[dict]:
     }
     page_count = 0
     while url:
-        resp = requests.get(url, params=params if page_count == 0 else None, timeout=REQUEST_TIMEOUT_S)
-        resp.raise_for_status()
+        resp = _get_with_retry(url, params if page_count == 0 else None, REQUEST_TIMEOUT_S)
         body = resp.json()
         batch = body.get("results", [])
         results.extend(batch)
