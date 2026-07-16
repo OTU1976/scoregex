@@ -1490,7 +1490,12 @@ elif st.session_state.page == "market":
                     </tr>
                 """
 
-            st.markdown(rows + "</tbody></table></div>", unsafe_allow_html=True)
+            # BUG CORRIGE 16/07/2026 : ce st.markdown() n'appelait pas html_block(),
+            # contrairement a tous les autres blocs HTML du fichier -- l'indentation
+            # Python (20 espaces avant chaque <tr>) faisait que Markdown traitait
+            # les lignes comme un bloc de code et affichait le HTML brut a l'ecran
+            # au lieu de le rendre (exactement le bug documente dans html_block()).
+            st.markdown(html_block(rows + "</tbody></table></div>"), unsafe_allow_html=True)
 
             # Key insight
             st.markdown(html_block("""
