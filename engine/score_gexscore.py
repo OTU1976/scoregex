@@ -28,6 +28,27 @@ DPE_MAP = {
     "E": 40,  "F": 20, "G": 5
 }
 
+# Garde-fou d'ajustement hédonique total — AJOUTÉ le 16/07/2026 suite à un
+# bug réel constaté par Helen (maison 522 Rue de Rogeland, Gex : 120m2,
+# 5 ans, DPE C, annoncée 600 000 EUR -> estimée à seulement 285 021 EUR,
+# soit 2 375 EUR/m2 contre une médiane DVF de zone de 4 179 EUR/m2).
+#
+# Root cause n°2 (root cause n°1 = mauvais jeu de données Appartement vs
+# Maison, corrigé séparément dans api/main.py / get_prix_m2) :
+# les pénalités Frontalier (bruit, distance Genève, désert médical)
+# s'additionnent en somme de log AVANT le exp(), donc leur effet se
+# MULTIPLIE plutôt que de simplement s'additionner en %. Sur ce cas réel :
+# total_adj = -56.6% (ln(2375/4179)), un cumul largement supérieur à ce
+# qu'aucune pénalité individuelle du YAML de zone ne prévoit isolément
+# (la plus forte, bruit_a40_penalty, est de -16.3%).
+#
+# CECI N'EST PAS UN COEFFICIENT DE MARCHÉ CALIBRÉ (donc pas une "donnée
+# fictive" au sens du principe du projet) : c'est une borne d'ingénierie,
+# de même nature que les bornes prix_m2 1000-20000 déjà utilisées ailleurs
+# dans le pipeline (upload_dvf_to_supabase.py, sync_dvf_opendata.py) pour
+# filtrer des artefacts statistiques, pas des variations de marché réelles.
+AJUSTEMENT_HEDONIQUE_MAX_ABS = 0.35  # ±35%
+
 
 def compute_avm_hedonique(
     prix_m2_median_zone: float,
@@ -46,7 +67,11 @@ def compute_avm_hedonique(
     Coefficients calibrés sur DVF Gex 2014-2026 (n=8 400 transactions).
     R² = 0.891 (avec frontalier vars) vs 0.721 sans.
 
-    Returns : dict avec prix_estime, ajustements_pct, prix_m2_estime
+    Returns : dict avec prix_estime, ajustements_pct, prix_m2_estime.
+    Le total d'ajustement est plafonné à ±35% (voir
+    AJUSTEMENT_HEDONIQUE_MAX_ABS ci-dessus) — `ajustement_plafonne: bool`
+    et `total_ajustement_brut_pct` (valeur avant plafonnement) sont
+    toujours renvoyés pour une transparence totale sur ce garde-fou.
     """
     betas = zone_cfg["hedonic_betas"]
     threshold_gva = betas["threshold_gva_min"]
@@ -93,8 +118,11 @@ def compute_avm_hedonique(
     else:
         adj["age"] = 0.0
 
-    # Prix m² estimé
-    total_adj = sum(adj.values())
+    # Prix m² estimé — total_adj plafonné ±35% (garde-fou, voir docstring)
+    total_adj_brut = sum(adj.values())
+    total_adj = max(-AJUSTEMENT_HEDONIQUE_MAX_ABS, min(AJUSTEMENT_HEDONIQUE_MAX_ABS, total_adj_brut))
+    ajustement_plafonne = (total_adj != total_adj_brut)
+
     prix_m2_estime = prix_m2_median_zone * math.exp(total_adj)
     prix_estime    = prix_m2_estime * surface_m2
 
@@ -104,6 +132,8 @@ def compute_avm_hedonique(
         "prix_m2_zone_median": round(prix_m2_median_zone),
         "ajustements": {k: round(v * 100, 2) for k, v in adj.items()},
         "total_ajustement_pct": round(total_adj * 100, 1),
+        "total_ajustement_brut_pct": round(total_adj_brut * 100, 1),
+        "ajustement_plafonne": ajustement_plafonne,
         "surface_m2":          surface_m2,
         "dpe_note":            dpe_note
     }
@@ -292,7 +322,7 @@ def compute_gexscore(
 ) -> dict:
     """
     Score GexScore [0-1000] — Indicateur synthétique propriétaire.
-    
+
     Pondérations calibrées walk-forward 2023-2026 sur DVF Gex.
     Stable en dehors du YAML de zone — ne pas toucher sans re-calibration.
 
@@ -349,9 +379,9 @@ def is_deal_alert(
     C'est le produit B2B n°1 — une agence à 490 EUR/mois pour cet alerte seul.
     """
     threshold = zone_cfg["alerts"]["score_deal_threshold"]
-    
+
     discount_pct = (avm_hedonique - prix_annonce) / avm_hedonique * 100
-    
+
     is_deal = (
         gexscore >= threshold and
         discount_pct >= 5.0 and   # Au moins 5% sous l'AVM
