@@ -15,6 +15,25 @@ Endpoints :
   - AVM Hédonique : DONNÉES RÉELLES — prix DVF calibrés en direct via Supabase
     (747 transactions Appartement réelles 2014-2025, mises à jour à chaque
     vague DGFiP) + coefficients hédoniques calibrés zone.
+  - Type de bien (16/07/2026 — bug critique corrigé, cf. cas réel 522 Rue de
+    Rogeland, Gex) : jusqu'ici /estimate utilisait TOUJOURS le prix médian
+    Appartement, même pour une maison (une maison à Gex était donc évaluée
+    avec un prix/m2 d'appartement — mécaniquement faux). Le champ
+    `type_bien` route maintenant vers `v_prix_marche_appartements` ou
+    `v_prix_marche_maisons` (265 transactions Maison réelles 2025, dont 198
+    avec surface_terrain connue — échantillon plus petit et plus récent que
+    les appartements, signalé honnêtement via `nb_transactions_dvf` et
+    `data_quality_notes.type_bien_maturite`). surface_terrain_m2 est
+    accepté et renvoyé pour affichage, mais N'EST PAS ENCORE intégré comme
+    ajustement de prix — aucun coefficient foncier n'est calibré sur
+    données réelles à ce stade (roadmap, pas de valeur inventée).
+  - Garde-fou d'ajustement hédonique (16/07/2026) : les pénalités
+    Frontalier (bruit, distance Genève, désert médical) pouvaient se
+    cumuler en exp() sans limite et faire chuter un prix de plus de 50%
+    (observé : -56.6% sur le cas réel ci-dessus). Un plafond ±35% est
+    maintenant appliqué (`ajustement_plafonne` signalé si actif) — ce n'est
+    pas un coefficient de marché calibré, c'est un garde-fou d'ingénierie
+    contre un artefact de compounding log-linéaire.
   - Merton Jump-Diffusion : modèle stochastique RÉEL, calibré sur les
     paramètres de zone (mu, sigma, sauts).
   - ESG : SEULEMENT la composante DPE est réelle. Inondation, argile, NDVI,
@@ -84,7 +103,7 @@ from engine.score_gexscore import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.7.0"
+VERSION = "3.8.0"
 
 app = FastAPI(
     title="GexScore API",
@@ -185,6 +204,64 @@ def _load_prix_from_supabase() -> Optional[dict]:
         return None
 
 
+_prix_cache_maisons: dict = {"data": None, "loaded_at": 0.0, "source": None}
+
+
+def _load_prix_maisons_from_supabase() -> Optional[dict]:
+    """Équivalent de _load_prix_from_supabase() mais pour v_prix_marche_maisons
+    (ajoutée le 16/07/2026). Retourne None si Supabase n'est pas configuré,
+    injoignable, ou si la vue est vide — AUCUN repli JSON n'existe pour les
+    maisons (pas d'ancien snapshot process_dvf.py côté maisons), donc
+    l'appelant doit traiter None honnêtement plutôt que de retomber sur les
+    prix Appartement (ce qui reproduirait exactement le bug corrigé ici)."""
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        log.warning("SUPABASE_URL/SUPABASE_ANON_KEY non configurés — prix Maison indisponibles")
+        return None
+    try:
+        resp = requests.get(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/v_prix_marche_maisons",
+            headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}"},
+            params={"select": "code_commune,nom_commune,prix_m2_median,nb_transactions,surface_terrain_mediane,derniere_transaction"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if not rows:
+            log.warning("Supabase a répondu mais v_prix_marche_maisons est vide")
+            return None
+        data = {
+            str(r["code_commune"]): {
+                "commune": r["nom_commune"],
+                "prix_m2_median": r["prix_m2_median"],
+                "nb_transactions": r["nb_transactions"],
+                "surface_terrain_mediane": r.get("surface_terrain_mediane"),
+                "derniere_transaction": r.get("derniere_transaction"),
+            }
+            for r in rows
+        }
+        log.info(f"Prix Maison chargés depuis Supabase (live) : {len(data)} communes")
+        return data
+    except Exception as e:
+        log.error(f"Échec requête Supabase v_prix_marche_maisons ({e})")
+        return None
+
+
+def load_prix_dvf_maisons() -> Optional[dict]:
+    """Source de prix Maison — Supabase uniquement (pas de fallback JSON,
+    voir docstring de _load_prix_maisons_from_supabase). Retourne None si
+    indisponible : l'appelant doit alors le signaler explicitement, jamais
+    utiliser silencieusement les prix Appartement à la place."""
+    now = time.time()
+    if _prix_cache_maisons["data"] is not None and (now - _prix_cache_maisons["loaded_at"]) < PRIX_CACHE_TTL_SECONDS:
+        return _prix_cache_maisons["data"]
+
+    data = _load_prix_maisons_from_supabase()
+    _prix_cache_maisons["data"] = data
+    _prix_cache_maisons["loaded_at"] = now
+    _prix_cache_maisons["source"] = "supabase_live" if data else "indisponible"
+    return data
+
+
 _regime_cache: dict = {"prob": None, "loaded_at": 0.0, "source": None}
 
 
@@ -279,16 +356,39 @@ def get_zone_config(zone_id: str) -> dict:
     raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' non trouvée")
 
 
-def get_prix_m2(commune: Optional[str]):
-    """Retourne (prix_m2_median, nom_commune, derniere_transaction).
-    `derniere_transaction` est None si la source active ne l'expose pas
-    (fallback JSON/minimal) — jamais de date inventée."""
+def get_prix_m2(commune: Optional[str], type_bien: str = "appartement"):
+    """Retourne (prix_m2_median, nom_commune, derniere_transaction,
+    nb_transactions, source_maison_indisponible).
+
+    `type_bien` == "maison" route vers v_prix_marche_maisons (16/07/2026 —
+    corrige le bug où une maison était systématiquement évaluée avec le
+    prix médian Appartement, ex. 522 Rue de Rogeland/Gex : 4179 EUR/m2
+    Appartement utilisé au lieu de ~5381 EUR/m2 Maison réel). Si les
+    données Maison sont indisponibles, on NE RETOMBE PAS silencieusement
+    sur les prix Appartement (ce serait reproduire le bug) : on retourne le
+    défaut de zone et `source_maison_indisponible=True`, à signaler
+    explicitement dans data_quality_notes.
+
+    `derniere_transaction`/`nb_transactions` sont None/0 si la source
+    active ne les expose pas — jamais de valeur inventée."""
+    is_maison = (type_bien or "appartement").lower() == "maison"
+
+    if is_maison:
+        prix_dvf = load_prix_dvf_maisons()
+        if prix_dvf is None:
+            return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, True
+        if commune:
+            for code, d in prix_dvf.items():
+                if d["commune"].lower() in commune.lower():
+                    return d["prix_m2_median"], d["commune"], d.get("derniere_transaction"), d.get("nb_transactions", 0), False
+        return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, True
+
     prix_dvf = load_prix_dvf()
     if commune:
         for code, d in prix_dvf.items():
             if d["commune"].lower() in commune.lower():
-                return d["prix_m2_median"], d["commune"], d.get("derniere_transaction")
-    return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None
+                return d["prix_m2_median"], d["commune"], d.get("derniere_transaction"), d.get("nb_transactions", 0), False
+    return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, False
 
 
 def _frontalier_with_timeout(lat: float, lon: float, zone_cfg: dict, budget_s: float = 5.0):
@@ -338,6 +438,9 @@ class EstimateRequest(BaseModel):
     annee_construction: Optional[int] = None   # Si absent -> âge neutre (20 ans)
     vue_leman: Optional[bool] = False           # Déclaratif — pas de détection auto (viewshed non construit)
     ecole_intl_500m: Optional[bool] = False     # Déclaratif — pas de filtrage OSM par nom d'école
+    # Ajoutés le 16/07/2026 (fix bug critique maison évaluée en appartement) :
+    type_bien: Optional[str] = "appartement"    # "appartement" | "maison" — route vers le bon jeu DVF
+    surface_terrain_m2: Optional[float] = None  # Affiché seulement — pas encore d'ajustement prix calibré
 
 
 class EstimationSaveRequest(BaseModel):
@@ -395,9 +498,17 @@ async def health():
         checks["zone_config"] = f"ERREUR: {e}"
     try:
         prix = load_prix_dvf()
-        checks["prix_dvf"] = f"ok ({len(prix)} communes, source={_prix_cache['source']})"
+        checks["prix_dvf_appartements"] = f"ok ({len(prix)} communes, source={_prix_cache['source']})"
     except Exception as e:
-        checks["prix_dvf"] = f"ERREUR: {e}"
+        checks["prix_dvf_appartements"] = f"ERREUR: {e}"
+    try:
+        prix_maisons = load_prix_dvf_maisons()
+        if prix_maisons is None:
+            checks["prix_dvf_maisons"] = "indisponible (Supabase non configuré ou v_prix_marche_maisons vide)"
+        else:
+            checks["prix_dvf_maisons"] = f"ok ({len(prix_maisons)} communes, source={_prix_cache_maisons['source']})"
+    except Exception as e:
+        checks["prix_dvf_maisons"] = f"ERREUR: {e}"
     try:
         prob, source = _compute_regime_bull_prob()
         checks["regime_marche"] = f"ok (prob={prob:.3f}, source={source})"
@@ -408,17 +519,28 @@ async def health():
 
 @app.get("/prix-marche")
 async def prix_marche():
+    prix_maisons = load_prix_dvf_maisons()
     return {
         "status": "ok",
         "source": "DVF reel DGFiP 2014-2025",
         "communes": load_prix_dvf(),
+        # Ajouté le 16/07/2026 — None si Supabase indisponible, jamais un
+        # objet vide fabriqué pour "faire joli".
+        "communes_maisons": prix_maisons,
+        "communes_maisons_note": (
+            "265 transactions Maison reelles 2025 (dont 198 avec surface_terrain), "
+            "echantillon plus petit et plus recent que les appartements 2014-2025"
+        ) if prix_maisons else "indisponible",
     }
 
 
 @app.post("/estimate")
 async def estimate(req: EstimateRequest):
     zone_cfg = get_zone_config(req.zone_id)
-    prix_m2_zone, commune_nom, derniere_transaction = get_prix_m2(req.commune)
+    type_bien = (req.type_bien or "appartement").lower()
+    if type_bien not in ("appartement", "maison"):
+        raise HTTPException(status_code=422, detail=f"type_bien invalide : '{req.type_bien}' (attendu 'appartement' ou 'maison')")
+    prix_m2_zone, commune_nom, derniere_transaction, nb_transactions_dvf, maison_indisponible = get_prix_m2(req.commune, type_bien)
     dpe = (req.dpe_note or "D").upper()
     age_bien = (2026 - req.annee_construction) if req.annee_construction else 20  # 20 = neutre (0% ajust.)
 
@@ -430,6 +552,8 @@ async def estimate(req: EstimateRequest):
     bruit_score = frontalier["detail"]["score_bruit"]
 
     # ── 2. AVM Hédonique — RÉEL, prix DVF + coefficients calibrés ──────────
+    #    prix_m2_zone est maintenant le médian Maison ou Appartement selon
+    #    type_bien (16/07/2026) — voir get_prix_m2().
     avm = compute_avm_hedonique(
         prix_m2_median_zone=prix_m2_zone,
         surface_m2=req.surface_m2,
@@ -517,10 +641,16 @@ async def estimate(req: EstimateRequest):
             "prix_estime_eur": avm["prix_estime_eur"],
             "prix_m2_estime": avm["prix_m2_estime"],
             "prix_m2_zone_median_dvf": prix_m2_zone,
+            "type_bien": type_bien,
+            "nb_transactions_dvf": nb_transactions_dvf,
             "donnees_dvf_a_jour_au": derniere_transaction,
             "ajustement_dpe_pct": avm["ajustements"]["dpe"],
             "ajustements_detail_pct": avm["ajustements"],
+            "total_ajustement_pct": avm["total_ajustement_pct"],
+            "total_ajustement_brut_pct": avm.get("total_ajustement_brut_pct", avm["total_ajustement_pct"]),
+            "ajustement_plafonne": avm.get("ajustement_plafonne", False),
             "surface_m2": req.surface_m2,
+            "surface_terrain_m2": req.surface_terrain_m2,
         },
         "merton": merton,
         "frontalier": frontalier,
@@ -535,6 +665,13 @@ async def estimate(req: EstimateRequest):
             "score_spatial": "proxy_derive_avm_hedonique_pas_sar_gwr_complet",
             "regime_marche": regime_source,
             "donnees_dvf_a_jour_au": "reel_vue_supabase" if derniere_transaction else "indisponible_source_active_ne_l_expose_pas",
+            "type_bien_maturite": (
+                "maison_donnees_indisponibles_prix_defaut_zone_utilise" if (type_bien == "maison" and maison_indisponible)
+                else "maison_echantillon_reduit_2025_uniquement_265_transactions_dont_198_avec_terrain" if type_bien == "maison"
+                else "appartement_echantillon_large_2014_2025"
+            ),
+            "surface_terrain": "affichee_uniquement_pas_encore_d_ajustement_prix_calibre" if req.surface_terrain_m2 else "non_fournie",
+            "ajustement_hedonique": "plafonne_a_35pct_garde_fou_ingenierie" if avm.get("ajustement_plafonne") else "non_plafonne",
         },
     })
 
