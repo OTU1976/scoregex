@@ -23,10 +23,20 @@ Endpoints :
     `v_prix_marche_maisons` (265 transactions Maison réelles 2025, dont 198
     avec surface_terrain connue — échantillon plus petit et plus récent que
     les appartements, signalé honnêtement via `nb_transactions_dvf` et
-    `data_quality_notes.type_bien_maturite`). surface_terrain_m2 est
-    accepté et renvoyé pour affichage, mais N'EST PAS ENCORE intégré comme
-    ajustement de prix — aucun coefficient foncier n'est calibré sur
-    données réelles à ce stade (roadmap, pas de valeur inventée).
+    `data_quality_notes.type_bien_maturite`).
+  - Surface du terrain (17/07/2026 — FEU VERT explicite d'Helen) :
+    surface_terrain_m2 est maintenant intégré comme un VRAI ajustement de
+    prix (Maison uniquement), via un coefficient RÉELLEMENT calibré par
+    régression sur les 196/198 transactions Maison réelles avec terrain
+    connu (effets fixes commune + contrôle taille du bien ; méthodologie
+    complète dans config/zones/001_pays_de_gex.yaml, clé
+    hedonic_betas.terrain_surface_beta = 0.152, t=4.84, n=196). La
+    référence de comparaison est la surface_terrain médiane RÉELLE de la
+    commune (vue Supabase v_prix_marche_maisons.surface_terrain_mediane),
+    repli sur une médiane poolée réelle (792.5 m²) si indisponible.
+    ⚠️ Cet ajustement passe par le MÊME plafond ±35% que les autres (voir
+    point suivant) — si les autres pénalités l'ont déjà saturé, l'effet
+    visible sur le prix final peut être nul, et c'est signalé tel quel.
   - Garde-fou d'ajustement hédonique (16/07/2026) : les pénalités
     Frontalier (bruit, distance Genève, désert médical) pouvaient se
     cumuler en exp() sans limite et faire chuter un prix de plus de 50%
@@ -103,7 +113,7 @@ from engine.score_gexscore import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.8.0"
+VERSION = "3.9.0"
 
 app = FastAPI(
     title="GexScore API",
@@ -358,7 +368,7 @@ def get_zone_config(zone_id: str) -> dict:
 
 def get_prix_m2(commune: Optional[str], type_bien: str = "appartement"):
     """Retourne (prix_m2_median, nom_commune, derniere_transaction,
-    nb_transactions, source_maison_indisponible).
+    nb_transactions, source_maison_indisponible, surface_terrain_mediane).
 
     `type_bien` == "maison" route vers v_prix_marche_maisons (16/07/2026 —
     corrige le bug où une maison était systématiquement évaluée avec le
@@ -370,25 +380,35 @@ def get_prix_m2(commune: Optional[str], type_bien: str = "appartement"):
     explicitement dans data_quality_notes.
 
     `derniere_transaction`/`nb_transactions` sont None/0 si la source
-    active ne les expose pas — jamais de valeur inventée."""
+    active ne les expose pas — jamais de valeur inventée.
+
+    `surface_terrain_mediane` (ajouté le 17/07/2026, pour l'ajustement
+    foncier — voir compute_avm_hedonique) : médiane RÉELLE de la commune,
+    exposée par la vue Supabase v_prix_marche_maisons. None pour un
+    appartement, ou si la donnée Maison est indisponible pour cette
+    commune — l'appelant doit alors utiliser le repli de zone
+    (hedonic_betas.terrain_reference_defaut_m2), jamais une valeur
+    inventée à la volée."""
     is_maison = (type_bien or "appartement").lower() == "maison"
 
     if is_maison:
         prix_dvf = load_prix_dvf_maisons()
         if prix_dvf is None:
-            return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, True
+            return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, True, None
         if commune:
             for code, d in prix_dvf.items():
                 if d["commune"].lower() in commune.lower():
-                    return d["prix_m2_median"], d["commune"], d.get("derniere_transaction"), d.get("nb_transactions", 0), False
-        return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, True
+                    terrain_med = d.get("surface_terrain_mediane")
+                    terrain_med = float(terrain_med) if terrain_med not in (None, "") else None
+                    return d["prix_m2_median"], d["commune"], d.get("derniere_transaction"), d.get("nb_transactions", 0), False, terrain_med
+        return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, True, None
 
     prix_dvf = load_prix_dvf()
     if commune:
         for code, d in prix_dvf.items():
             if d["commune"].lower() in commune.lower():
-                return d["prix_m2_median"], d["commune"], d.get("derniere_transaction"), d.get("nb_transactions", 0), False
-    return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, False
+                return d["prix_m2_median"], d["commune"], d.get("derniere_transaction"), d.get("nb_transactions", 0), False, None
+    return PRIX_ZONE_DEFAULT, (commune or "Pays de Gex"), None, 0, False, None
 
 
 def _frontalier_with_timeout(lat: float, lon: float, zone_cfg: dict, budget_s: float = 5.0):
@@ -440,7 +460,10 @@ class EstimateRequest(BaseModel):
     ecole_intl_500m: Optional[bool] = False     # Déclaratif — pas de filtrage OSM par nom d'école
     # Ajoutés le 16/07/2026 (fix bug critique maison évaluée en appartement) :
     type_bien: Optional[str] = "appartement"    # "appartement" | "maison" — route vers le bon jeu DVF
-    surface_terrain_m2: Optional[float] = None  # Affiché seulement — pas encore d'ajustement prix calibré
+    # Ajusté le 17/07/2026 (FEU VERT Helen) : intégré comme vrai ajustement
+    # de prix pour type_bien="maison" (coefficient régressé, voir YAML +
+    # compute_avm_hedonique). Ignoré si type_bien="appartement".
+    surface_terrain_m2: Optional[float] = None
 
 
 class EstimationSaveRequest(BaseModel):
@@ -540,9 +563,15 @@ async def estimate(req: EstimateRequest):
     type_bien = (req.type_bien or "appartement").lower()
     if type_bien not in ("appartement", "maison"):
         raise HTTPException(status_code=422, detail=f"type_bien invalide : '{req.type_bien}' (attendu 'appartement' ou 'maison')")
-    prix_m2_zone, commune_nom, derniere_transaction, nb_transactions_dvf, maison_indisponible = get_prix_m2(req.commune, type_bien)
+    prix_m2_zone, commune_nom, derniere_transaction, nb_transactions_dvf, maison_indisponible, terrain_mediane_commune = get_prix_m2(req.commune, type_bien)
     dpe = (req.dpe_note or "D").upper()
     age_bien = (2026 - req.annee_construction) if req.annee_construction else 20  # 20 = neutre (0% ajust.)
+
+    # Référence foncière pour l'ajustement terrain (17/07/2026) — priorité à
+    # la médiane RÉELLE de la commune (vue Supabase), repli sur la médiane
+    # poolée réelle de zone si indisponible pour cette commune. Jamais de
+    # valeur inventée à la volée — voir get_prix_m2() et compute_avm_hedonique().
+    surface_terrain_ref = terrain_mediane_commune or zone_cfg["hedonic_betas"].get("terrain_reference_defaut_m2")
 
     # ── 1. Score Frontalier — RÉEL, OSRM + OSM Overpass en direct ──────────
     frontalier, frontalier_timed_out = _frontalier_with_timeout(req.lat, req.lon, zone_cfg)
@@ -565,6 +594,8 @@ async def estimate(req: EstimateRequest):
         desert_medical=desert_medical,
         age_bien=age_bien,
         zone_cfg=zone_cfg,
+        surface_terrain_m2=(req.surface_terrain_m2 if type_bien == "maison" else None),
+        surface_terrain_ref_m2=surface_terrain_ref,
     )
 
     # ── 3. ESG — PARTIEL. Seule la composante DPE est une donnée réelle. ───
@@ -670,7 +701,13 @@ async def estimate(req: EstimateRequest):
                 else "maison_echantillon_reduit_2025_uniquement_265_transactions_dont_198_avec_terrain" if type_bien == "maison"
                 else "appartement_echantillon_large_2014_2025"
             ),
-            "surface_terrain": "affichee_uniquement_pas_encore_d_ajustement_prix_calibre" if req.surface_terrain_m2 else "non_fournie",
+            "surface_terrain": (
+                (
+                    "ajustement_calibre_applique_beta_0152_regression_reelle_n196"
+                    if type_bien == "maison" else
+                    "non_applique_type_bien_appartement"
+                ) if req.surface_terrain_m2 else "non_fournie"
+            ),
             "ajustement_hedonique": "plafonne_a_35pct_garde_fou_ingenierie" if avm.get("ajustement_plafonne") else "non_plafonne",
         },
     })
