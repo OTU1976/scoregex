@@ -60,7 +60,9 @@ def compute_avm_hedonique(
     ecole_intl_500m: bool,
     desert_medical: bool,
     age_bien: int,
-    zone_cfg: dict
+    zone_cfg: dict,
+    surface_terrain_m2: Optional[float] = None,
+    surface_terrain_ref_m2: Optional[float] = None,
 ) -> dict:
     """
     AVM hédonique log-linéaire : ln(P) = alpha + sum(beta_k * X_k)
@@ -72,6 +74,23 @@ def compute_avm_hedonique(
     AJUSTEMENT_HEDONIQUE_MAX_ABS ci-dessus) — `ajustement_plafonne: bool`
     et `total_ajustement_brut_pct` (valeur avant plafonnement) sont
     toujours renvoyés pour une transparence totale sur ce garde-fou.
+
+    surface_terrain_m2 / surface_terrain_ref_m2 (ajoutés le 17/07/2026,
+    FEU VERT explicite d'Helen — voir méthodologie complète dans
+    config/zones/001_pays_de_gex.yaml, clé hedonic_betas.terrain_surface_beta) :
+    ajustement foncier RÉELLEMENT calibré par régression (pas inventé) sur
+    les 196/198 vraies transactions Maison avec surface_terrain connue.
+    Si l'un des deux est absent/nul (bien = appartement, ou référence
+    commune indisponible), l'ajustement "terrain" est 0.0 — jamais une
+    valeur devinée.
+
+    ⚠️ IMPORTANT (transparence garde-fou) : cet ajustement foncier passe
+    par le MÊME plafond ±35% que les autres (aucune exemption spéciale).
+    Si les autres pénalités (ex. distance Genève) ont déjà saturé le
+    plafond, l'ajustement terrain peut n'avoir AUCUN effet visible sur le
+    prix final — ceci est intentionnel (le garde-fou protège contre le
+    compounding, quelle que soit la source de l'ajustement) et doit être
+    signalé honnêtement plutôt que masqué.
     """
     betas = zone_cfg["hedonic_betas"]
     threshold_gva = betas["threshold_gva_min"]
@@ -117,6 +136,20 @@ def compute_avm_hedonique(
         adj["age"] = -0.003 * (age_bien - 20)
     else:
         adj["age"] = 0.0
+
+    # Surface du terrain (Maison uniquement) — ajouté le 17/07/2026.
+    # beta = élasticité ln(prix_m2) / ln(surface_terrain), régression réelle
+    # à effets fixes commune + contrôle taille du bien (voir YAML pour la
+    # méthodologie et les chiffres complets de calibration).
+    terrain_beta = betas.get("terrain_surface_beta")
+    if (
+        terrain_beta is not None
+        and surface_terrain_m2 is not None and surface_terrain_m2 > 0
+        and surface_terrain_ref_m2 is not None and surface_terrain_ref_m2 > 0
+    ):
+        adj["terrain"] = terrain_beta * math.log(surface_terrain_m2 / surface_terrain_ref_m2)
+    else:
+        adj["terrain"] = 0.0
 
     # Prix m² estimé — total_adj plafonné ±35% (garde-fou, voir docstring)
     total_adj_brut = sum(adj.values())
