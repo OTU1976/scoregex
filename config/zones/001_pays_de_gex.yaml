@@ -49,11 +49,62 @@ gwr:
   lat_center: 46.21
   lon_center: 6.06
 
-# ── Coefficients hédoniques locaux (calibrés DVF 2014-2026) ─────────
+# ── Coefficients hédoniques locaux ───────────────────────────────────
+# ATTENTION HONNÊTETÉ (17/07/2026) : l'en-tête "calibrés DVF 2014-2026"
+# ci-dessus est historiquement inexact pour TOUS les coefficients de ce
+# bloc — seuls dpe_per_class (approx. littérature DPE France) et,
+# depuis aujourd'hui, terrain_surface_beta ET distance_gva_per_min (voir
+# ci-dessous) ont réellement été vérifiés contre les transactions DVF
+# réelles de la zone. bruit_a40_penalty, vue_leman_bonus, ecole_intl_bonus,
+# desert_medical_penalty, frontalier_premium_max, ndvi_bonus_per_unit
+# restent des VALEURS D'ORIGINE NON RE-VÉRIFIÉES à ce stade — à auditer
+# un jour de la même façon (roadmap, pas urgent, mais à ne pas oublier).
 hedonic_betas:
   dpe_per_class: -0.148      # beta log-prix par classe DPE (C=réf.)
-  distance_gva_per_min: -0.028  # Au-delà de threshold_gva_min
-  threshold_gva_min: 15.0    # Minutes — seuil sous lequel pas de pénalité
+
+  # ── Distance Genève — RECALIBRÉ le 17/07/2026 suite à un signal fort
+  # d'Helen (la pénalité -47.6% sur le cas Rogeland/Gex, 32 min, lui
+  # semblait irréaliste vu la demande Grand Genève sur les 8 communes).
+  # Elle avait raison : -0.028/min N'AVAIT JAMAIS ÉTÉ CALIBRÉ sur les
+  # vraies transactions Maison — c'était une valeur d'origine du projet,
+  # jamais vérifiée, malgré l'en-tête de section qui la présentait comme
+  # "calibrée DVF". Root cause distincte du garde-fou ±35% (qui, lui,
+  # protège contre un compounding log-linéaire — ici le problème est en
+  # amont : LE COEFFICIENT LUI-MÊME était faux).
+  #
+  # MÉTHODOLOGIE (calcul réel, exécuté le 17/07/2026 via Supabase MCP +
+  # extension Postgres `http` temporaire pour géocoder les 8 mairies via
+  # l'API BAN gratuite et calculer un vrai temps de trajet OSRM vers
+  # Genève-Cornavin pour chacune, comme le fait déjà score_frontalier.py
+  # pour un bien individuel) :
+  #   - Régression : ln(prix_m2) = alpha + beta1*ln(surface_terrain) +
+  #     beta2*ln(surface_reelle_bati) + beta3*gva_min, sur les 196
+  #     transactions Maison réelles (remplace les effets fixes commune
+  #     par la variable continue gva_min, pour pouvoir précisément
+  #     l'identifier — un effet fixe commune aurait absorbé toute la
+  #     variation, gva_min étant quasi constant par commune).
+  #   - Résultat : beta3 (distance_gva_per_min) = -0.00305 (SE naïve
+  #     0.00486, t=-0.63) — un ORDRE DE GRANDEUR plus petit que l'ancien
+  #     -0.028, et statistiquement NON distinguable de zéro.
+  #   - ⚠️ LIMITE HONNÊTE IMPORTANTE : gva_min ne prend que 8 valeurs
+  #     distinctes (une par commune) répétées sur 196 lignes — l'échantillon
+  #     RÉEL pour identifier cet effet est proche de n=8 (communes), pas
+  #     n=196 (transactions). L'écart-type calculé ci-dessus SOUS-ESTIME
+  #     donc probablement l'incertitude réelle (problème classique de
+  #     régression sur variable groupée). Conclusion honnête : les
+  #     données ne permettent PAS d'affirmer avec certitude qu'il existe
+  #     un effet distance différent de zéro DANS cette zone restreinte
+  #     (16-30 min pour les 8 communes) — exactement l'intuition d'Helen
+  #     (le Pays de Gex entier profite de la demande Grand Genève,
+  #     l'écart Ferney/Gex ne se reflète pas clairement dans les prix
+  #     bruts : Cessy, la commune la PLUS chère du jeu de données à
+  #     5478 EUR/m2, est aussi l'une des plus éloignées à 25 min).
+  #   - Décision : mis à 0.0 plutôt que de garder -0.028 (non supporté)
+  #     ou d'imposer -0.003 avec une fausse précision (non significatif).
+  #     À réévaluer si/quand la zone s'étend (Annemasse, etc.) et que la
+  #     variation de distance devient plus large et mieux identifiable.
+  distance_gva_per_min: 0.0
+  threshold_gva_min: 15.0    # Minutes — conservé (sans effet si beta=0), utile si beta3 réévalué plus tard
   bruit_a40_penalty: -0.163  # Si bruit LDEN > 65 dB
   bruit_gva_penalty: -0.082  # Si bruit avions GVA > 55 dB
   vue_leman_bonus: 0.112     # Proxy altitude IGN > 520m
