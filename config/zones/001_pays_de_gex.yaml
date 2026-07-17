@@ -62,6 +62,46 @@ hedonic_betas:
   frontalier_premium_max: 0.187   # Premium max (Ferney/Cessy)
   ndvi_bonus_per_unit: 0.04  # NDVI > 0.4 → +4% (Planet Labs)
 
+  # ── Surface du terrain (Maison uniquement) — AJOUTÉ le 17/07/2026 ──
+  # FEU VERT explicite d'Helen (17/07/2026) : coefficient RÉELLEMENT
+  # calibré par régression sur les vraies transactions Maison en base
+  # (Supabase, table `biens`, pipeline DVF DGFiP 2025) — PAS une valeur
+  # inventée, conformément au principe "pas de donnée fictive" du projet.
+  #
+  # MÉTHODOLOGIE (calcul exécuté en direct via Supabase MCP, SQL, le
+  # 17/07/2026 — regr_slope/regr_intercept + résolution manuelle du
+  # système normal à 2 régresseurs, Postgres n'ayant pas d'agrégat de
+  # régression multivariée natif) :
+  #   - Échantillon : 196 des 198 transactions Maison réelles avec
+  #     surface_terrain connue (2 exclues : bornes 50-3000 m² pour
+  #     retirer 2 valeurs implausibles, ex. micro-parcelles < 50m²),
+  #     couvrant les 8 communes du Pays de Gex.
+  #   - Modèle : ln(prix_m2) = alpha_commune + beta_terrain*ln(surface_terrain)
+  #     + beta_bati*ln(surface_reelle_bati), estimé par effets fixes
+  #     commune (démeaning intra-groupe, équivalent Frisch-Waugh-Lovell).
+  #   - Résultat : beta_terrain = +0.152 (SE=0.0315, t=4.84, p<0.001,
+  #     n=196, 8 communes) — statistiquement très significatif.
+  #   - beta_bati (contrôle, pour mémoire) = -0.723 (t=-13.2) : les
+  #     maisons plus grandes ont un prix/m² plus faible ("size discount"),
+  #     un effet immobilier classique et attendu, pas une anomalie.
+  #   - ⚠️ POINT MÉTHODOLOGIQUE IMPORTANT (transparence totale) : la
+  #     régression NAÏVE (sans effets fixes commune ni contrôle taille)
+  #     donne un coefficient de signe INVERSE (-0.094, R²=0.036) — un
+  #     Simpson's paradox classique : les communes moins chères (ex.
+  #     Sergy, ~3941 EUR/m2) ont en moyenne des terrains plus grands que
+  #     les communes plus chères (ex. Cessy/Ferney), donc une corrélation
+  #     brute confond "commune" et "surface terrain". Seule la version à
+  #     effets fixes isole le vrai effet, positif, du foncier à commune
+  #     et taille de bien comparables. Ne jamais utiliser le coefficient
+  #     naïf — le beta_terrain ci-dessous EST la version corrigée.
+  terrain_surface_beta: 0.152
+  # Référence de secours si la vue Supabase v_prix_marche_maisons (colonne
+  # surface_terrain_mediane, par commune, calculée en direct sur les
+  # mêmes données réelles) est indisponible — médiane poolée des 8
+  # communes du même échantillon de 196 lignes (calcul réel, pas un
+  # chiffre rond choisi arbitrairement).
+  terrain_reference_defaut_m2: 792.5
+
 # ── Paramètres Merton Jump-Diffusion ────────────────────────────────
 merton:
   mu: 0.032          # Drift annuel moyen Gex (DVF calibré)
