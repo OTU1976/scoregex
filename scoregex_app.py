@@ -1273,6 +1273,36 @@ elif st.session_state.page == "estimate":
             </div>
             """), unsafe_allow_html=True)
 
+            # ── Détail des 5 composantes du GexScore — AJOUTÉ le 18/07/2026 ──────
+            # Avant ce correctif, seul le score final (0-1000) était affiché : les
+            # 5 sous-scores réellement utilisés dans le calcul (spatial, frontalier,
+            # esg, régime de marché, quantique) n'étaient visibles nulle part dans
+            # l'UI, alors qu'ils le sont déjà dans la réponse API
+            # (gexscore.composants). Transparence totale demandée par Helen le
+            # 18/07/2026 — chaque composante affiche aussi si elle est un modèle
+            # réel ou un proxy partiel (honnêteté, pas de survente).
+            comp = gs.get("composants", {})
+            if comp:
+                st.markdown('<div class="sg-input-section" style="margin-top:1rem;">', unsafe_allow_html=True)
+                st.markdown('<div class="sg-input-title">Détail des 5 composantes du GexScore</div>', unsafe_allow_html=True)
+                _lignes_composantes = [
+                    ("Score spatial", comp.get("score_spatial"), "proxy hédonique — pas encore un vrai modèle géostatistique (SAR/GWR)"),
+                    ("Score frontalier", comp.get("score_frontalier"), "composite réel : proximité Genève, désert médical, bruit, services"),
+                    ("Score ESG", comp.get("score_esg"), "seule la brique DPE est réelle ; inondation/argile/NDVI/mixité neutres par défaut"),
+                    ("Régime de marché", comp.get("regime_bull_pct"), "réel — tendance DVF 180 jours"),
+                    ("Score quantique", comp.get("qubo_quality_pct"), "placeholder fixe (0,75) — vrai calcul QUBO prévu en Phase 2, pas encore actif"),
+                ]
+                for _label, _val, _note in _lignes_composantes:
+                    if _val is None:
+                        continue
+                    st.markdown(html_block(f"""
+                    <div class="sg-metric">
+                        <span class="sg-metric-label">{_label}<br><span style="font-size:0.65rem;color:#777;">{_note}</span></span>
+                        <span class="sg-metric-value">{_val:.1f}</span>
+                    </div>
+                    """), unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
             if ajustement_plafonne:
                 st.warning(
                     "Ajustement hédonique total plafonné à ±35% (garde-fou) — les pénalités "
