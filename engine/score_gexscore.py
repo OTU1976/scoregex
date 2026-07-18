@@ -373,6 +373,41 @@ def compute_avm_merton(
     }
 
 
+# ══ SCORE SPATIAL GÉOSTATISTIQUE RÉEL ═════════════════════════════════════════
+# AJOUTÉ le 18/07/2026 (point 5/9 demandé explicitement par Helen : "j'exige
+# qu'on le mette en place"). Remplace le proxy plat "50 + ajustement_hedonique%"
+# par une vraie moyenne locale du prix/m2, pondérée par un noyau gaussien de
+# distance, calculée sur les transactions DVF géocodées (biens.geom, PostGIS)
+# via la fonction SQL spatial_local_estimate() (rayon 800m, sigma 400m par
+# défaut). C'est un lissage spatial pondéré par noyau — une technique réelle
+# et défendable, apparentée à une GWR univariée simplifiée — MAIS PAS une
+# GWR multivariée complète (qui resterait un chantier plus lourd, roadmap).
+# Honnêteté : si moins de n_min voisins géocodés dans le rayon, retourne
+# None pour forcer l'appelant (api/main.py) à retomber sur le proxy hédonique
+# plutôt que de deviner un score sur un échantillon local trop faible.
+
+def compute_spatial_score_geostat(
+    prix_m2_local_pondere: Optional[float],
+    prix_m2_median_zone: float,
+    n_voisins: int,
+    n_min: int = 5,
+) -> Optional[float]:
+    """Score spatial [0-100] à partir d'une moyenne locale pondérée réelle.
+
+    ratio = prix_m2_local_pondere / prix_m2_median_zone
+    score = 50 + 50*tanh(2*(ratio-1))  → borné [0,100], 50 = neutre (zone = local)
+
+    Retourne None si les données sont insuffisantes (jamais un score deviné).
+    """
+    if prix_m2_local_pondere is None or n_voisins is None or n_voisins < n_min:
+        return None
+    if not prix_m2_median_zone or prix_m2_median_zone <= 0:
+        return None
+    ratio = prix_m2_local_pondere / prix_m2_median_zone
+    score = 50.0 + 50.0 * math.tanh(2.0 * (ratio - 1.0))
+    return round(max(0.0, min(100.0, score)), 1)
+
+
 # ══ SCORE GEXSCORE [0-1000] ═══════════════════════════════════════════════════
 
 def compute_gexscore(
