@@ -1,0 +1,35 @@
+name: Monitoring production — /health
+
+# Surveillance gratuite de l'API sans compte tiers (Sentry non branché faute
+# de DSN). Ping /health toutes les 15 min ; si l'API renvoie autre chose que
+# 200 + status=ok, le job échoue -> GitHub notifie automatiquement par email
+# les personnes ayant les notifications d'Actions activées (Settings >
+# Notifications > Actions). Aurait détecté la panne "EnvFileReadError" du
+# 18/07/2026 en moins de 15 minutes au lieu d'attendre un signalement manuel.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: |
+          set -e
+          RESPONSE=$(curl -s -w "\n%{http_code}" https://scoregex.vercel.app/health)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          CODE=$(echo "$RESPONSE" | tail -n 1)
+          echo "HTTP $CODE"
+          echo "$BODY"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::API scoregex.vercel.app/health a renvoye HTTP $CODE"
+            exit 1
+          fi
+          STATUS=$(echo "$BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
+          if [ "$STATUS" != "ok" ]; then
+            echo "::error::API repond mais status != ok : $STATUS"
+            exit 1
+          fi
