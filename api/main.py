@@ -108,12 +108,13 @@ from engine.score_gexscore import (
     compute_avm_merton,
     compute_gexscore,
     is_deal_alert,
+    compute_spatial_score_geostat,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.10.0"
+VERSION = "3.11.0"
 
 app = FastAPI(
     title="GexScore API",
@@ -211,6 +212,41 @@ def _load_prix_from_supabase() -> Optional[dict]:
         return data
     except Exception as e:
         log.error(f"Échec requête Supabase ({e}) — repli sur fallback local")
+        return None
+
+
+def _spatial_local_estimate(lat: Optional[float], lon: Optional[float]) -> Optional[dict]:
+    """Score spatial RÉEL — ajouté le 18/07/2026 (point 5/9 demandé par Helen).
+
+    Appelle la fonction SQL/PostGIS spatial_local_estimate() (déployée le
+    18/07/2026 sur Supabase) via RPC PostgREST : moyenne locale du prix/m2
+    pondérée par un noyau gaussien de distance sur les transactions DVF
+    géocodées (colonne biens.geom, peuplée le 18/07/2026 — elle était vide
+    à 100% avant ce correctif malgré PostGIS installé).
+
+    Retourne None si Supabase indisponible ou pas assez de voisins dans le
+    rayon — l'appelant (endpoint /estimate) doit alors retomber honnêtement
+    sur le proxy hédonique existant, jamais deviner une valeur."""
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY or lat is None or lon is None:
+        return None
+    try:
+        resp = requests.post(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/rpc/spatial_local_estimate",
+            headers={
+                "apikey": SUPABASE_ANON_KEY,
+                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={"p_lon": lon, "p_lat": lat},
+            timeout=4,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if not rows:
+            return None
+        return rows[0] if isinstance(rows, list) else rows
+    except Exception as e:
+        log.warning(f"spatial_local_estimate RPC indisponible ({e}) — repli sur proxy hédonique")
         return None
 
 
@@ -617,9 +653,31 @@ async def estimate(req: EstimateRequest):
     # ── 4. Merton Jump-Diffusion — RÉEL, modèle stochastique calibré ───────
     merton = compute_avm_merton(prix_central=avm["prix_estime_eur"], zone_cfg=zone_cfg)
 
-    # ── 5. Score spatial — PROXY dérivé de l'ajustement hédonique réel.
-    #    Ce n'est PAS le modèle SAR/GWR complet prévu au roadmap (non construit).
-    score_spatial = max(0.0, min(100.0, 50.0 + avm["total_ajustement_pct"]))
+    # ── 5. Score spatial — RÉEL quand assez de transactions géocodées à
+    #    proximité (moyenne locale du prix/m2 pondérée par noyau gaussien de
+    #    distance, cf. spatial_local_estimate() sur Supabase/PostGIS),
+    #    repli honnête sur le proxy hédonique sinon. Ajouté le 18/07/2026
+    #    (point 5/9 demandé par Helen). Ce n'est toujours PAS une GWR
+    #    multivariée complète (roadmap) — c'est un lissage spatial univarié
+    #    réel, pas une simple dérivation de l'ajustement hédonique.
+    score_spatial_proxy = max(0.0, min(100.0, 50.0 + avm["total_ajustement_pct"]))
+    geostat_raw = _spatial_local_estimate(req.lat, req.lon)
+    score_spatial_geostat = None
+    if geostat_raw:
+        try:
+            score_spatial_geostat = compute_spatial_score_geostat(
+                prix_m2_local_pondere=float(geostat_raw["prix_m2_pondere"]) if geostat_raw.get("prix_m2_pondere") is not None else None,
+                prix_m2_median_zone=prix_m2_zone,
+                n_voisins=int(geostat_raw.get("n_voisins") or 0),
+            )
+        except (TypeError, ValueError):
+            score_spatial_geostat = None
+    if score_spatial_geostat is not None:
+        score_spatial = score_spatial_geostat
+        spatial_source = f"geostat_reel_noyau_gaussien_{int(geostat_raw.get('n_voisins'))}_voisins_800m"
+    else:
+        score_spatial = score_spatial_proxy
+        spatial_source = "proxy_derive_avm_hedonique_pas_assez_de_voisins_geocodes"
 
     # ── 6. Régime marché — RÉEL, tendance DVF 180j vs 180j précédents
     #    (remplace l'ancien biais fixe 0.58 trouvé le 10/07/2026).
@@ -693,7 +751,7 @@ async def estimate(req: EstimateRequest):
         "data_quality_notes": {
             "frontalier": "timeout_fallback_neutre" if frontalier_timed_out else "temps_reel_osrm_osm_overpass",
             "esg": "partiel_dpe_reel_reste_defaut_zone_neutre_georisques_insee_ndvi_non_brancres",
-            "score_spatial": "proxy_derive_avm_hedonique_pas_sar_gwr_complet",
+            "score_spatial": spatial_source,
             "regime_marche": regime_source,
             "donnees_dvf_a_jour_au": "reel_vue_supabase" if derniere_transaction else "indisponible_source_active_ne_l_expose_pas",
             "type_bien_maturite": (
