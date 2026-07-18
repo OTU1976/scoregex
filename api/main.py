@@ -113,7 +113,7 @@ from engine.score_gexscore import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.9.0"
+VERSION = "3.10.0"
 
 app = FastAPI(
     title="GexScore API",
