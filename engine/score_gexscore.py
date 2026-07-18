@@ -101,11 +101,41 @@ def compute_avm_hedonique(
     # Ajustements log (tous exprimés en % de variation du log-prix)
     adj = {}
 
-    # DPE (classe C = référence, 0)
+    # DPE (classe C = référence). RÉVISÉ le 18/07/2026 : remplace l'ancien
+    # coefficient UNIFORME (-0.148/classe, soit +29.6% pour un écart A vs C)
+    # par une courbe CONVEXE non-linéaire — effet modéré en haut d'échelle
+    # (A/B/C), effet marqué en bas (E/F/G). Deux raisons à ce changement :
+    # (1) littérature française (Notaires-DVF, CGDD/SDES) : l'effet-prix du
+    #     DPE observé empiriquement croît vers le bas de l'échelle, il n'est
+    #     pas constant par classe ; un coefficient plat surestime l'effet
+    #     entre classes économes (A/B/C) où l'écart réel est plus proche de
+    #     5-10% par classe que de 15%.
+    # (2) base légale (Loi Climat & Résilience 2021+, décrets appli.) :
+    #     l'interdiction de louer un logement G dès 2025, F dès 2028, E dès
+    #     2034 crée un choc de valeur concentré sur le BAS de l'échelle
+    #     (illiquidité locative), pas un gradient uniforme haut/bas.
+    # Comme pour terrain/GVA cette semaine : ceci reste une estimation
+    # raisonnée, PAS encore calibrée sur données ScoreGex (0 ligne DPE non-
+    # nulle dans nos 10 840 transactions DVF, vérifié le 18/07/2026) — à
+    # remplacer par une vraie régression dès que le croisement ADEME
+    # Observatoire des DPE sera disponible (tâche en cours).
     dpe_classes = ["A", "B", "C", "D", "E", "F", "G"]
-    dpe_idx     = dpe_classes.index(dpe_note.upper()) if dpe_note.upper() in dpe_classes else 3
-    ref_idx     = dpe_classes.index("C")
-    adj["dpe"]  = betas["dpe_per_class"] * (dpe_idx - ref_idx)
+    dpe_step_log_defaut = {
+        "A-B": -0.045, "B-C": -0.045, "C-D": -0.050,
+        "D-E": -0.070, "E-F": -0.120, "F-G": -0.150,
+    }
+    dpe_step_log = betas.get("dpe_step_log", dpe_step_log_defaut)
+    dpe_idx = dpe_classes.index(dpe_note.upper()) if dpe_note.upper() in dpe_classes else 3
+    ref_idx = dpe_classes.index("C")
+
+    def _dpe_level(idx: int) -> float:
+        """Cumul log depuis la classe A (=0) jusqu'à l'indice donné."""
+        return sum(
+            dpe_step_log[f"{dpe_classes[i]}-{dpe_classes[i + 1]}"]
+            for i in range(idx)
+        )
+
+    adj["dpe"] = _dpe_level(dpe_idx) - _dpe_level(ref_idx)
 
     # Distance Genève
     if t_gva_min is not None and t_gva_min > threshold_gva:
@@ -394,6 +424,13 @@ def compute_gexscore(
             "score_frontalier": round(score_frontalier, 1),
             "score_esg":        round(score_esg, 1),
             "regime_bull_pct":  round(regime_bull_prob * 100, 1),
+            # AJOUTÉ le 18/07/2026 : la 5e composante existait déjà dans le
+            # calcul (w_quantum * qubo_quality*100 ci-dessus) mais n'était
+            # jamais exposée dans la réponse API — l'UI ne pouvait donc
+            # montrer que 4 des 5 scores réellement utilisés. qubo_quality
+            # reste un placeholder fixe (Phase 2, pas un vrai calcul QUBO
+            # aujourd'hui) — affiché comme tel, jamais présenté comme réel.
+            "qubo_quality_pct": round(qubo_quality * 100, 1),
         }
     }
 
