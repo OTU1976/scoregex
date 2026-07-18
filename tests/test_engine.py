@@ -20,6 +20,7 @@ from engine.score_gexscore import (
     compute_gexscore,
     compute_esg_score,
     is_deal_alert,
+    compute_spatial_score_geostat,
 )
 
 
@@ -177,6 +178,37 @@ def test_deal_alert_detecte_une_vraie_sous_evaluation():
     )
     assert result["is_deal_alert"] is True
     assert result["discount_pct"] == 20.0
+
+
+# ── 7. Score spatial géostatistique réel (ajouté 18/07/2026) ────────────────
+def test_spatial_geostat_neutre_si_local_egal_median():
+    score = compute_spatial_score_geostat(
+        prix_m2_local_pondere=5000, prix_m2_median_zone=5000, n_voisins=157,
+    )
+    assert score == 50.0
+
+
+def test_spatial_geostat_prime_si_local_plus_cher():
+    score = compute_spatial_score_geostat(
+        prix_m2_local_pondere=6000, prix_m2_median_zone=5000, n_voisins=100,
+    )
+    assert score > 50.0
+    assert score <= 100.0
+
+
+def test_spatial_geostat_decote_si_local_moins_cher():
+    score = compute_spatial_score_geostat(
+        prix_m2_local_pondere=4000, prix_m2_median_zone=5000, n_voisins=100,
+    )
+    assert score < 50.0
+    assert score >= 0.0
+
+
+def test_spatial_geostat_none_si_pas_assez_de_voisins():
+    """Sous n_min voisins geocodes -> None (jamais un score devine), pour
+    forcer l'appelant a retomber sur le proxy hedonique."""
+    assert compute_spatial_score_geostat(5500, 5000, n_voisins=2) is None
+    assert compute_spatial_score_geostat(None, 5000, n_voisins=200) is None
 
 
 # ── 6. ESG score : bornes [0,100] toujours respectées ───────────────────────
