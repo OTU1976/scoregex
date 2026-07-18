@@ -50,17 +50,46 @@ gwr:
   lon_center: 6.06
 
 # ── Coefficients hédoniques locaux ───────────────────────────────────
-# ATTENTION HONNÊTETÉ (17/07/2026) : l'en-tête "calibrés DVF 2014-2026"
-# ci-dessus est historiquement inexact pour TOUS les coefficients de ce
-# bloc — seuls dpe_per_class (approx. littérature DPE France) et,
-# depuis aujourd'hui, terrain_surface_beta ET distance_gva_per_min (voir
-# ci-dessous) ont réellement été vérifiés contre les transactions DVF
-# réelles de la zone. bruit_a40_penalty, vue_leman_bonus, ecole_intl_bonus,
+# ATTENTION HONNÊTETÉ (17/07/2026, mis à jour 18/07/2026) : l'en-tête
+# "calibrés DVF 2014-2026" ci-dessus est historiquement inexact pour la
+# PLUPART des coefficients de ce bloc — seuls terrain_surface_beta ET
+# distance_gva_per_min ont réellement été vérifiés contre les transactions
+# DVF réelles de la zone (régression réelle, n=196). dpe_step_log (voir
+# ci-dessous) reste une estimation raisonnée (littérature + base légale),
+# PAS une calibration ScoreGex — vérifié le 18/07/2026 : etiquette_dpe est
+# NULL sur 100% des 10 840 transactions DVF de la base (Appartement,
+# Maison, Local commercial confondus), donc aucune régression interne
+# n'est possible tant que les données ADEME DPE ne sont pas croisées
+# (tâche en cours). bruit_a40_penalty, vue_leman_bonus, ecole_intl_bonus,
 # desert_medical_penalty, frontalier_premium_max, ndvi_bonus_per_unit
 # restent des VALEURS D'ORIGINE NON RE-VÉRIFIÉES à ce stade — à auditer
 # un jour de la même façon (roadmap, pas urgent, mais à ne pas oublier).
 hedonic_betas:
-  dpe_per_class: -0.148      # beta log-prix par classe DPE (C=réf.)
+  # ── DPE — RÉVISÉ le 18/07/2026 suite à un signal fort d'Helen (le
+  # coefficient uniforme -0.148/classe donnait +29.6% pour un écart A vs
+  # C, jugé disproportionné face à un delta terrain de 800m² qui ne
+  # donnait que +2.4%). Remplacé par une courbe CONVEXE non-linéaire :
+  # effet modéré entre classes économes (A-B-C-D), effet marqué en bas
+  # d'échelle (D-E-F-G). Deux justifications : (1) la littérature
+  # française (Notaires-DVF, CGDD/SDES) montre un effet-prix du DPE qui
+  # croît vers le bas de l'échelle, pas un gradient constant ; (2) base
+  # légale réelle : la Loi Climat & Résilience (2021+) interdit la
+  # location des logements G dès 2025, F dès 2028, E dès 2034 — un choc
+  # de valeur concentré sur le bas de l'échelle (risque d'illiquidité
+  # locative), qui justifie économiquement et juridiquement un effet plus
+  # fort qu'entre A et C. Chaque valeur = effet log en passant d'UNE
+  # classe à la suivante (immédiatement moins bonne) ; le code cumule ces
+  # pas pour obtenir l'écart total entre la classe du bien et C (réf.).
+  # Toujours une estimation raisonnée, pas une calibration ScoreGex (voir
+  # note ci-dessus) — à remplacer par une vraie régression après le
+  # croisement avec l'Observatoire des DPE (ADEME, open data).
+  dpe_step_log:
+    "A-B": -0.045
+    "B-C": -0.045
+    "C-D": -0.050
+    "D-E": -0.070
+    "E-F": -0.120
+    "F-G": -0.150
 
   # ── Distance Genève — RECALIBRÉ le 17/07/2026 suite à un signal fort
   # d'Helen (la pénalité -47.6% sur le cas Rogeland/Gex, 32 min, lui
