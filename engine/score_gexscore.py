@@ -49,6 +49,48 @@ DPE_MAP = {
 # filtrer des artefacts statistiques, pas des variations de marché réelles.
 AJUSTEMENT_HEDONIQUE_MAX_ABS = 0.35  # ±35%
 
+DPE_CLASSES_ORDRE = ["A", "B", "C", "D", "E", "F", "G"]
+
+
+def _dpe_cumul_levels(dpe_step_log: dict) -> list:
+    """Niveaux log cumulés (vs A=0) pour A,B,C,D,E,F,G à partir d'un dict de
+    pas séquentiels {"A-B":.., "B-C":.., ..., "F-G":..}."""
+    levels = [0.0]
+    for i in range(len(DPE_CLASSES_ORDRE) - 1):
+        step_key = f"{DPE_CLASSES_ORDRE[i]}-{DPE_CLASSES_ORDRE[i+1]}"
+        levels.append(levels[-1] + dpe_step_log[step_key])
+    return levels
+
+
+def valider_dpe_step_log_monotone(dpe_step_log: dict, label: str = "dpe_step_log") -> None:
+    """GARDE-FOU AJOUTÉ le 21/07/2026 (chantier recalibrage DPE A/B/G, suite
+    à un signal d'Helen). Un curseur DPE économiquement valide DOIT être
+    monotone : chaque classe moins bonne (A→G) doit valoir strictement moins
+    cher (ou égal), jamais plus cher, que la précédente. Sans ce garde-fou,
+    une recalibration partielle (ex. ne corriger que G sans revérifier F)
+    peut silencieusement produire un bien classé G mieux valorisé qu'un bien
+    F à caractéristiques égales — une incohérence économique et un bug de
+    fond, découvert PENDANT ce chantier (voir historique complet dans le
+    commentaire de dpe_step_log_by_type ci-dessous : une tentative de
+    recalibrer G séparément par type, en le mélangeant à une courbe F
+    partagée, aurait justement produit cette incohérence pour les
+    appartements — attrapée AVANT déploiement grâce à cette fonction).
+
+    Lève ValueError si non-monotone — on préfère un crash explicite au
+    chargement de la config à une API qui sert silencieusement un score
+    économiquement absurde."""
+    levels = _dpe_cumul_levels(dpe_step_log)
+    for i in range(len(levels) - 1):
+        if levels[i + 1] > levels[i] + 1e-9:
+            pcts = [round((math.exp(l) - 1) * 100, 1) for l in levels]
+            raise ValueError(
+                f"{label} NON MONOTONE : {DPE_CLASSES_ORDRE[i+1]} "
+                f"({pcts[i+1]}% vs A) vaut plus cher que {DPE_CLASSES_ORDRE[i]} "
+                f"({pcts[i]}% vs A) — courbe DPE économiquement invalide, "
+                f"refusée avant déploiement. Courbe complète vs A : "
+                f"{dict(zip(DPE_CLASSES_ORDRE, pcts))}"
+            )
+
 
 def compute_avm_hedonique(
     prix_m2_median_zone: float,
@@ -63,6 +105,7 @@ def compute_avm_hedonique(
     zone_cfg: dict,
     surface_terrain_m2: Optional[float] = None,
     surface_terrain_ref_m2: Optional[float] = None,
+    type_bien: Optional[str] = None,
 ) -> dict:
     """
     AVM hédonique log-linéaire : ln(P) = alpha + sum(beta_k * X_k)
@@ -119,12 +162,48 @@ def compute_avm_hedonique(
     # nulle dans nos 10 840 transactions DVF, vérifié le 18/07/2026) — à
     # remplacer par une vraie régression dès que le croisement ADEME
     # Observatoire des DPE sera disponible (tâche en cours).
-    dpe_classes = ["A", "B", "C", "D", "E", "F", "G"]
+    # RECALIBRÉ le 21/07/2026 (A/B) suite à une synthèse rigoureuse données
+    # locales (régression réelle log(prix_m2), n=775 DVF x ADEME réel,
+    # Pays de Gex) x données nationales (Notaires de France, "La valeur
+    # verte des logements", transactions 2024) fusionnées par crédibilité
+    # actuarielle (Limited Fluctuation Credibility, Z=sqrt(n/30)). A/C et
+    # B/C locaux (+15.9%/+12.2%, n=5/n=17) étaient too peu significatifs
+    # seuls -> repondérés vers le national (+16.5% A/D, ~+9% B/D interpolé)
+    # -> A-B=-0.0155, B-C=-0.088 (contre -0.045/-0.045 avant), soit
+    # A/C=+10.9%, B/C=+9.2% (contre +9.4%/+4.6% implicites avant).
+    #
+    # ── dpe_step_log_by_type (Maison / Appartement) — ARCHITECTURE PRÊTE,
+    # PAS ENCORE PEUPLÉE, voir zone_cfg pour la note complète. Feasibility
+    # confirmée à Helen (21/07/2026) : `type_bien` est déjà disponible côté
+    # api/main.py /estimate, donc le branchement ci-dessous fonctionne dès
+    # qu'un zone_cfg fournit `hedonic_betas.dpe_step_log_by_type.{maison|
+    # appartement}`. Non peuplé pour l'instant car la même analyse a montré
+    # que F et G, splittés par type SUR NOS DONNÉES LOCALES SEULES (n=775),
+    # donnent des cellules trop petites et statistiquement fragiles pour
+    # être fiables (F_maison n=15 t=-1.53 NON significatif, G_appart n=11
+    # t=-1.05 NON significatif) — et pire, un blend naïf national+local par
+    # classe (sans ancrer G relativement à F) produisait une courbe NON
+    # MONOTONE pour les appartements (G moins pénalisé que F), détectée et
+    # bloquée par valider_dpe_step_log_monotone() ci-dessus avant tout
+    # déploiement. Attendre plus de données ADEME (sync hebdo en place) pour
+    # peupler ce bloc avec un n suffisant PAR cellule type x classe.
     dpe_step_log_defaut = {
-        "A-B": -0.045, "B-C": -0.045, "C-D": -0.050,
+        "A-B": -0.0155, "B-C": -0.088, "C-D": -0.050,
         "D-E": -0.070, "E-F": -0.120, "F-G": -0.150,
     }
-    dpe_step_log = betas.get("dpe_step_log", dpe_step_log_defaut)
+    dpe_step_log_by_type = betas.get("dpe_step_log_by_type") or {}
+    type_key = (type_bien or "").strip().lower()
+    dpe_step_log = (
+        dpe_step_log_by_type.get(type_key)
+        or betas.get("dpe_step_log")
+        or dpe_step_log_defaut
+    )
+    # Garde-fou monotonicité — coût négligeable (7 éléments), vérifié à
+    # chaque appel pour rester valide même si un zone_cfg est construit à la
+    # main (tests, futures zones) sans repasser par un chargement YAML validé.
+    valider_dpe_step_log_monotone(dpe_step_log, label=f"dpe_step_log[{type_key or 'partagé'}]")
+
+    dpe_classes = DPE_CLASSES_ORDRE
     dpe_idx = dpe_classes.index(dpe_note.upper()) if dpe_note.upper() in dpe_classes else 3
     ref_idx = dpe_classes.index("C")
 
