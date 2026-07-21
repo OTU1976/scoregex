@@ -9,7 +9,7 @@
 zone_id: "gex_001"
 zone_name: "Pays de Gex"
 zone_description: "8 communes frontalières Ain — Genève"
-version: "3.0.0"
+version: "3.1.0"
 active: true
 
 # ── Communes incluses ────────────────────────────────────────────────
@@ -83,13 +83,64 @@ hedonic_betas:
   # Toujours une estimation raisonnée, pas une calibration ScoreGex (voir
   # note ci-dessus) — à remplacer par une vraie régression après le
   # croisement avec l'Observatoire des DPE (ADEME, open data).
+  # RECALIBRÉ le 21/07/2026 (A-B, B-C uniquement) — chantier lancé par une
+  # question d'Helen sur la fiabilité de A/B/G (petits échantillons locaux)
+  # après la régression multivariée réelle du 21/07/2026 (n=775, DVF x ADEME
+  # matché, Pays de Gex). MÉTHODE (rigueur "credibility theory" actuarielle,
+  # Limited Fluctuation / Mayerson-Longley-Cook) : fusion pondérée entre (1)
+  # le coefficient LOCAL réel (A: +15.9%, n=5, t=1.4 ; B: +12.2%, n=17, t=2.0
+  # — significatifs faiblement, échantillons trop petits pour être fiables
+  # seuls) et (2) l'ancre NATIONALE (Notaires de France, "La valeur verte des
+  # logements", transactions 2024, seule étude française sourcée sur des
+  # millions de transactions réelles : A vs D +16,5% moyenne 2 sources
+  # concordantes ; B vs D ~+9% interpolé dans la fourchette publiée A-B
+  # combinée 6-14%/6-22% — PAS un point dur par lettre, contrairement à A et
+  # G qui le sont), transposée en référence C via notre propre lien local
+  # D/C=-7,7% (régression réelle, n=202, t=-3.8, solide). Crédibilité
+  # Z=sqrt(n/30) : Z=0.41 pour A (n=5), Z=0.75 pour B (n=17) — plus n est
+  # petit, plus on pondère vers le national. Résultat : A/C=+10,9%,
+  # B/C=+9,2% (contre +9,4%/+4,6% implicites dans l'ancien -0.045/-0.045
+  # uniforme, qui datait d'avant tout croisement ADEME réel).
+  #
+  # C-D/D-E/E-F/F-G : INCHANGÉS pour l'instant. La même analyse a testé un
+  # split Maison/Appartement pour F et G (voir dpe_step_log_by_type
+  # ci-dessous) : les cellules locales sont trop petites et fragiles
+  # (F_maison n=15 t=-1.53 NON sig. ; G_appart n=11 t=-1.05 NON sig.) pour
+  # recalibrer ces deux classes avec confiance aujourd'hui, et une première
+  # tentative de fusion nationale+locale par classe a produit une courbe
+  # NON MONOTONE pour les appartements (G moins pénalisé que F) — détectée
+  # et bloquée par engine/score_gexscore.py::valider_dpe_step_log_monotone()
+  # AVANT tout déploiement. Conclusion honnête à Helen : le -39%/-35%-
+  # plafonné actuel pour G n'est probablement PAS aussi surestimé qu'il y
+  # paraissait à partir du seul échantillon local mélangé (n=28, -14,4%) —
+  # une fois ancré sur F (solide, n=54, t=-8.4) + l'écart G-vs-F national
+  # (maisons, Notaires 2024), G/C(maison) recalculé ≈ -32%, très proche de
+  # la valeur actuelle. À revisiter avec un n plus grand par cellule
+  # type x classe (le sync ADEME hebdomadaire augmente cet échantillon
+  # chaque semaine) plutôt que de figer une correction fragile aujourd'hui.
   dpe_step_log:
-    "A-B": -0.045
-    "B-C": -0.045
+    "A-B": -0.0155
+    "B-C": -0.088
     "C-D": -0.050
     "D-E": -0.070
     "E-F": -0.120
     "F-G": -0.150
+
+  # ── dpe_step_log_by_type (Maison / Appartement) — ARCHITECTURE PRÊTE,
+  # VOLONTAIREMENT NON PEUPLÉE (voir note ci-dessus). engine/score_gexscore.py
+  # sait déjà lire ce bloc (clés "maison"/"appartement", même format que
+  # dpe_step_log) et retombe sur dpe_step_log partagé si absent ou si la
+  # clé du type demandé n'existe pas — 100% rétrocompatible. À peupler
+  # classe par classe, dès qu'un n ≥ 30 PAR CELLULE (type x classe DPE) est
+  # atteint ET que la courbe résultante reste monotone (vérifié
+  # automatiquement au chargement, voir get_zone_config() dans api/main.py).
+  # dpe_step_log_by_type:
+  #   maison:
+  #     "A-B": ...
+  #     ...
+  #   appartement:
+  #     "A-B": ...
+  #     ...
 
   # ── Distance Genève — RECALIBRÉ le 17/07/2026 suite à un signal fort
   # d'Helen (la pénalité -47.6% sur le cas Rogeland/Gex, 32 min, lui
