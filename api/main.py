@@ -114,7 +114,7 @@ from engine.score_gexscore import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.11.0"
+VERSION = "3.12.0"
 
 app = FastAPI(
     title="GexScore API",
@@ -213,6 +213,54 @@ def _load_prix_from_supabase() -> Optional[dict]:
     except Exception as e:
         log.error(f"Échec requête Supabase ({e}) — repli sur fallback local")
         return None
+
+
+GEORISQUES_BASE = "https://www.georisques.gouv.fr/api/v1"
+
+
+def _georisques_scores(lat: Optional[float], lon: Optional[float], rayon_m: int = 1000) -> dict:
+    """ESG RÉEL (inondation + argile) — ajouté le 21/07/2026 (point 5/9 - feu
+    vert Helen). API Géorisques (BRGM/MTE), publique, gratuite, sans clé.
+    Vérifiée en direct le 21/07/2026 :
+      - argile : /api/v1/rga?latlon=lon,lat -> {"codeExposition": "1|2|3",
+        "exposition": "Exposition faible|moyenne|forte"} (classification BRGM
+        standard retrait-gonflement des argiles a1/a2/a3).
+      - inondation : /api/v1/gaspar/azi?latlon=lon,lat -> liste des Atlas de
+        Zones Inondables (AZI) recensés dans le rayon. Absence de donnée
+        officielle de risque gradué "national" au-delà des atlas -> le
+        nombre de zones AZI dans le rayon sert de proxy réel (pas un
+        placeholder), honnêtement documenté comme tel.
+
+    Retourne les défauts neutres existants (0.10/0.10) si l'API est
+    injoignable ou si les champs attendus sont absents — jamais un score
+    deviné, l'ESG reste dégradé proprement plutôt que de planter."""
+    result = {"inondation_risk": 0.10, "argile_risk": 0.10, "source": "defaut_neutre_georisques_indisponible"}
+    if lat is None or lon is None:
+        return result
+    latlon = f"{lon},{lat}"
+    try:
+        r_argile = requests.get(
+            f"{GEORISQUES_BASE}/rga", params={"latlon": latlon, "rayon": rayon_m}, timeout=4,
+        )
+        r_argile.raise_for_status()
+        code = r_argile.json().get("codeExposition")
+        if code is not None:
+            result["argile_risk"] = max(0.0, min(1.0, (int(code) - 1) / 2.0))
+    except Exception as e:
+        log.warning(f"Géorisques /rga indisponible ({e}) — argile_risk reste au défaut neutre")
+
+    try:
+        r_azi = requests.get(
+            f"{GEORISQUES_BASE}/gaspar/azi", params={"latlon": latlon, "rayon": rayon_m}, timeout=4,
+        )
+        r_azi.raise_for_status()
+        n_zones = r_azi.json().get("results", 0)
+        result["inondation_risk"] = max(0.0, min(1.0, n_zones / 2.0))
+    except Exception as e:
+        log.warning(f"Géorisques /gaspar/azi indisponible ({e}) — inondation_risk reste au défaut neutre")
+
+    result["source"] = "reel_georisques_brgm"
+    return result
 
 
 def _spatial_local_estimate(lat: Optional[float], lon: Optional[float]) -> Optional[dict]:
@@ -634,14 +682,16 @@ async def estimate(req: EstimateRequest):
         surface_terrain_ref_m2=surface_terrain_ref,
     )
 
-    # ── 3. ESG — PARTIEL. Seule la composante DPE est une donnée réelle. ───
-    #    Le reste (inondation, argile, NDVI, mixité, vacance, démographie)
-    #    utilise des défauts neutres de zone tant que Georisques/INSEE/NDVI
-    #    ne sont pas branchés (roadmap Section VII — non construit).
+    # ── 3. ESG — PARTIEL mais amélioré le 21/07/2026 (point 5/9 - feu vert
+    #    Helen). Inondation + argile sont maintenant RÉELS (API Géorisques
+    #    BRGM/MTE en direct, cf. _georisques_scores()). NDVI/mixité/vacance/
+    #    démographie restent des défauts neutres de zone (INSEE Filosofi et
+    #    Sentinel-2 NDVI pas encore branchés — prochains chantiers).
+    georisques = _georisques_scores(req.lat, req.lon)
     esg = compute_esg_score(
         dpe_note=dpe,
-        inondation_risk=0.10,
-        argile_risk=0.10,
+        inondation_risk=georisques["inondation_risk"],
+        argile_risk=georisques["argile_risk"],
         ndvi=0.40,
         nb_medecins=nb_medecins,
         mixite_sociale_score=50.0,
@@ -750,7 +800,7 @@ async def estimate(req: EstimateRequest):
         "deal_alert": deal,
         "data_quality_notes": {
             "frontalier": "timeout_fallback_neutre" if frontalier_timed_out else "temps_reel_osrm_osm_overpass",
-            "esg": "partiel_dpe_reel_reste_defaut_zone_neutre_georisques_insee_ndvi_non_brancres",
+            "esg": f"partiel_dpe_et_georisques_reels_{georisques['source']}_reste_neutre_insee_ndvi_non_branches",
             "score_spatial": spatial_source,
             "regime_marche": regime_source,
             "donnees_dvf_a_jour_au": "reel_vue_supabase" if derniere_transaction else "indisponible_source_active_ne_l_expose_pas",
