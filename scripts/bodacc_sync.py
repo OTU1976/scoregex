@@ -33,8 +33,11 @@ COMMUNES = [
 ROWS_PAR_PAGE = 100  # limite de l'API opendatasoft v1
 MAX_PAGES_PAR_COMMUNE = 200  # garde-fou : 200*100 = 20 000 avis max/commune
 
+# CORRIGÉ le 21/07/2026 avant déploiement : pas de secret SUPABASE_ANON_KEY
+# dans ce repo (vérifié) — service_role est de toute façon plus adapté à un
+# job CI serveur qui écrit des données (bypasse RLS proprement).
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
-SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
+SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 
 def fetch_commune(ville: str) -> list[dict]:
@@ -86,8 +89,8 @@ def upsert_batch(rows: list[dict]) -> None:
     resp = requests.post(
         f"{SUPABASE_URL}/rest/v1/bodacc_avis",
         headers={
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+            "apikey": SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
             "Content-Type": "application/json",
             "Prefer": "resolution=merge-duplicates,return=minimal",
         },

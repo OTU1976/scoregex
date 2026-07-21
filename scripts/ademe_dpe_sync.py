@@ -44,8 +44,13 @@ FIELDS = ",".join([
     "surface_habitable_logement", "_geopoint", "date_etablissement_dpe",
 ])
 
+# CORRIGÉ le 21/07/2026 avant déploiement : le repo n'a PAS de secret
+# SUPABASE_ANON_KEY (vérifié via Settings > Secrets and variables > Actions
+# — seuls SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY existent). Un job CI qui
+# écrit des données est de toute façon plus à sa place avec la clé
+# service_role (bypasse RLS, usage serveur uniquement) qu'avec la clé anon.
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
-SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
+SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 MAX_PAGES_PAR_COMMUNE = 30  # garde-fou : 30 * 1000 = 30 000 lignes max/commune
 
@@ -116,8 +121,8 @@ def upsert_batch(rows: list[dict]) -> None:
     resp = requests.post(
         f"{SUPABASE_URL}/rest/v1/dpe_ademe_reference",
         headers={
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+            "apikey": SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
             "Content-Type": "application/json",
             "Prefer": "resolution=merge-duplicates,return=minimal",
         },
