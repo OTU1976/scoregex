@@ -1,0 +1,33 @@
+name: Sync ADEME — Observatoire des DPE (Pays de Gex)
+
+# Ajouté le 21/07/2026 (point 7/9 - feu vert explicite d'Helen : "OUI, OUI,
+# et OUI" puis confirmation). Le runner GitHub a un accès internet complet
+# (contrairement au sandbox de développement où data.ademe.fr est bloqué par
+# l'allowlist réseau) — c'est pourquoi ce croisement tourne ici plutôt que
+# dans l'environnement de travail habituel. Hebdomadaire : les DPE réels ne
+# changent pas d'un jour à l'autre, pas besoin d'un cron plus agressif.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"   # tous les lundis à 03h00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  sync-ademe-dpe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Synchroniser les DPE réels ADEME (8 communes Pays de Gex)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/ademe_dpe_sync.py

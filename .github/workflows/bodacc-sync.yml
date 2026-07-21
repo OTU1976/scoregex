@@ -1,0 +1,31 @@
+name: Sync BODACC — Distressed Asset Scanner (Pays de Gex)
+
+# Ajouté le 21/07/2026 (point 8/9 - feu vert explicite d'Helen). Synchronise
+# quotidiennement les annonces légales BODACC (créations, radiations,
+# procédures collectives) des 8 communes du Pays de Gex dans Supabase
+# (table bodacc_avis + vue v_bodacc_distressed_recent).
+
+on:
+  schedule:
+    - cron: "30 3 * * *"   # tous les jours à 03h30 UTC
+  workflow_dispatch: {}
+
+jobs:
+  sync-bodacc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Synchroniser les avis BODACC (8 communes Pays de Gex)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python scripts/bodacc_sync.py
