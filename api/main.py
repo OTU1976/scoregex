@@ -109,12 +109,13 @@ from engine.score_gexscore import (
     compute_gexscore,
     is_deal_alert,
     compute_spatial_score_geostat,
+    valider_dpe_step_log_monotone,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.12.0"
+VERSION = "3.13.0"
 
 app = FastAPI(
     title="GexScore API",
@@ -446,6 +447,22 @@ def get_zone_config(zone_id: str) -> dict:
     for cfg_path in CONFIG_DIR.glob("*.yaml"):
         cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
         if cfg.get("zone_id") == zone_id:
+            # GARDE-FOU ajouté le 21/07/2026 (chantier recalibrage DPE) :
+            # valide au CHARGEMENT (une fois par zone, grâce au lru_cache
+            # ci-dessus — pas à chaque requête) que la courbe DPE partagée
+            # ET chaque courbe type-spécifique éventuelle (maison/
+            # appartement) sont bien monotones. Échoue vite et fort plutôt
+            # que de servir silencieusement un score économiquement
+            # incohérent (ex. un G mieux valorisé qu'un F). Voir
+            # engine/score_gexscore.py::valider_dpe_step_log_monotone pour
+            # l'historique complet de ce garde-fou (un vrai bug de ce type
+            # a été détecté et bloqué pendant ce chantier, avant tout
+            # déploiement).
+            betas = cfg.get("hedonic_betas", {})
+            if "dpe_step_log" in betas:
+                valider_dpe_step_log_monotone(betas["dpe_step_log"], label=f"{zone_id}.dpe_step_log")
+            for type_key, step_log in (betas.get("dpe_step_log_by_type") or {}).items():
+                valider_dpe_step_log_monotone(step_log, label=f"{zone_id}.dpe_step_log_by_type.{type_key}")
             return cfg
     raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' non trouvée")
 
@@ -680,6 +697,7 @@ async def estimate(req: EstimateRequest):
         zone_cfg=zone_cfg,
         surface_terrain_m2=(req.surface_terrain_m2 if type_bien == "maison" else None),
         surface_terrain_ref_m2=surface_terrain_ref,
+        type_bien=type_bien,
     )
 
     # ── 3. ESG — PARTIEL mais amélioré le 21/07/2026 (point 5/9 - feu vert
