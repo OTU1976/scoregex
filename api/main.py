@@ -86,12 +86,14 @@ import time
 import math
 import logging
 import concurrent.futures
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 import yaml
 import requests
+import sentry_sdk
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -115,7 +117,69 @@ from engine.score_gexscore import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.13.0"
+VERSION = "3.14.0"
+
+# ── Sentry SDK — AJOUTÉ le 22/07/2026 (Helen a créé le compte et fourni le
+# DSN via steelldy.sentry.io). Initialisé AVANT la création de l'app FastAPI
+# (requis par le SDK pour instrumenter correctement les routes).
+#
+# ÉCART VOLONTAIRE par rapport au snippet quickstart Sentry (celui affiché
+# sur la page "Getting Started" copiée par Helen) : le quickstart met
+# `send_default_pii=True`, ce qui envoie par défaut les headers de requête
+# (dont `Authorization`/`Cookie`), l'IP, et le corps de requête à Sentry.
+# Or nos endpoints /estimations/* reçoivent un JWT Supabase réel dans le
+# header Authorization (voir _supabase_headers_for_user ci-dessous) — l'envoyer
+# tel quel à un sous-traitant tiers (même RGPD-compliant, hébergement `.de.`
+# choisi par Helen = UE, bon réflexe) serait une fuite de secret
+# d'authentification dans les rapports d'erreur, pas juste un souci de
+# confidentialité. Donc : send_default_pii=False, ET un hook before_send qui
+# retire explicitement Authorization/Cookie/apikey de tout évènement envoyé,
+# en garde-fou supplémentaire même si send_default_pii venait à être
+# réactivé par erreur plus tard.
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+
+
+def _sentry_before_send(event: dict, hint: dict) -> Optional[dict]:
+    """Retire les secrets d'authentification (JWT Supabase, cookies, clés
+    API) de tout évènement avant envoi à Sentry — jamais de credential dans
+    un rapport d'erreur, même si send_default_pii est actif."""
+    request = event.get("request")
+    if request and isinstance(request.get("headers"), dict):
+        for h in list(request["headers"].keys()):
+            if h.lower() in ("authorization", "cookie", "apikey", "x-api-key"):
+                request["headers"][h] = "[retire_avant_envoi_sentry]"
+    return event
+
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        release=f"scoregex-api@{VERSION}",
+        environment=os.getenv("VERCEL_ENV", "production"),
+        send_default_pii=False,   # RGPD + anti-fuite JWT (voir commentaire ci-dessus)
+        before_send=_sentry_before_send,
+        traces_sample_rate=0.1,   # 10% des transactions (perf monitoring) — évite le volume/coût plein
+    )
+    log.info("Sentry SDK initialise (DSN configure, PII desactivee, before_send actif)")
+else:
+    log.warning("SENTRY_DSN non configure — erreurs de production NON remontees a Sentry")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Remplace l'ancien `@app.on_event("startup")` (déprécié par FastAPI,
+    voir DeprecationWarning constatée lors des tests le 22/07/2026 — corrigé
+    dans la foulée plutôt que laissé trainer). Envoie un message info (PAS
+    une erreur) à Sentry à chaque démarrage à froid, pour vérifier en direct
+    que le SDK transmet bien — visible dans l'onglet Issues de Sentry,
+    niveau "info", jamais compté comme une vraie erreur de production."""
+    if SENTRY_DSN:
+        sentry_sdk.capture_message(
+            f"ScoreGex API v{VERSION} démarrée — SDK Sentry vérifié en direct.",
+            level="info",
+        )
+    yield
+
 
 app = FastAPI(
     title="GexScore API",
@@ -125,6 +189,7 @@ app = FastAPI(
         "Steelldy SAS."
     ),
     version=VERSION,
+    lifespan=_lifespan,
     # DESACTIVE le 16/07/2026 (decision Helen) : /docs et /redoc exposaient
     # une console interactive publique ("Try it out") permettant a n'importe
     # qui d'appeler POST /estimate -- le vrai moteur GexScore/AVM -- gratuit-
@@ -638,6 +703,9 @@ async def health():
         checks["regime_marche"] = f"ok (prob={prob:.3f}, source={source})"
     except Exception as e:
         checks["regime_marche"] = f"ERREUR: {e}"
+    # AJOUTÉ le 22/07/2026 (intégration Sentry) — jamais masquer si le
+    # monitoring d'erreurs est réellement actif ou non en production.
+    checks["sentry"] = "ok (DSN configure, PII desactivee)" if SENTRY_DSN else "non_configure (SENTRY_DSN absent)"
     return {"status": "ok", "version": VERSION, "checks": checks}
 
 
