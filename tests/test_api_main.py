@@ -30,7 +30,7 @@ def test_api_main_simporte_sans_erreur():
     """Smoke test : le module api.main se charge sans exception, même sans
     SENTRY_DSN configuré (cas normal en environnement de dev/CI)."""
     import api.main as m
-    assert m.VERSION == "3.14.0"
+    assert m.VERSION == "3.15.0"
 
 
 def test_sentry_scrub_retire_authorization():
