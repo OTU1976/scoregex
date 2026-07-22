@@ -36,17 +36,30 @@ Limites methodologiques honnetes (a ne jamais masquer) :
   domaine, le module retourne disponible=False plutot que d'extrapoler
   silencieusement (un one-hot commune inconnu produirait une prediction
   non fiable, jamais observee a l'entrainement).
+
+INCIDENT DU 22/07/2026 (a garder en memoire, honnetete oblige) : la toute
+premiere version de ce module importait le package `xgboost` reel pour
+l'inference. Ce package (avec sa bibliotheque C++ bundlee, libxgboost.so)
+a fait passer la fonction serverless Vercel a 846.58 MB, largement
+au-dela de la limite de 500 MB -- ECHEC DE BUILD sur tous les
+deploiements suivants. Pire : le commit intermediaire qui a introduit
+l'import (avant que ce module lui-meme n'existe sur `main`) a fait
+planter la production en LIVE (500 FUNCTION_INVOCATION_FAILED) pendant
+~55 minutes avant detection et hotfix. Ce module utilise desormais
+`engine/pure_xgb_predict.PureXGBRegressor`, une reimplementation pure
+Python + stdlib json (aucune dependance externe) de l'inference gbtree,
+validee a une correspondance quasi-exacte contre le vrai xgb.Booster.predict()
+(voir scripts/validate_pure_xgb.py -- max diff relative 1e-6 sur 2709
+vecteurs de test). Le package xgboost REEL reste utilise, mais UNIQUEMENT
+pour l'entrainement local/hors-ligne (scripts/train_xgboost_divergence.py),
+jamais dans l'environnement Vercel.
 """
 import json
 import os
 import threading
 from typing import Optional
 
-try:
-    import xgboost as xgb  # noqa: F401  (import isole : voir _get_model())
-    _XGBOOST_DISPONIBLE = True
-except Exception:  # pragma: no cover - environnement sans xgboost installe
-    _XGBOOST_DISPONIBLE = False
+from engine.pure_xgb_predict import PureXGBRegressor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(HERE, "..", "models", "xgb_divergence_v1.json")
@@ -112,20 +125,15 @@ def _load_once():
     with _lock:
         if _booster is not None or _load_error is not None:
             return
-        if not _XGBOOST_DISPONIBLE:
-            _load_error = "xgboost non installe dans l'environnement"
-            return
         try:
             if not os.path.exists(MODEL_PATH):
                 _load_error = f"modele introuvable : {MODEL_PATH}"
                 return
             with open(META_PATH, "r", encoding="utf-8") as f:
                 _meta = json.load(f)
-            bst = xgb.Booster()
-            bst.load_model(MODEL_PATH)
-            _booster = bst
+            _booster = PureXGBRegressor(MODEL_PATH)
         except Exception as e:  # pragma: no cover
-            _load_error = f"echec chargement modele XGBoost : {e!r}"
+            _load_error = f"echec chargement modele XGBoost (pure Python) : {e!r}"
 
 
 def get_status() -> dict:
@@ -210,11 +218,7 @@ def compute_divergence_xgboost(
         }
 
     try:
-        dmat = xgb.DMatrix(
-            [feats],
-            feature_names=_meta["feature_names_ordre"],
-        )
-        prix_m2_xgb = float(_booster.predict(dmat)[0])
+        prix_m2_xgb = float(_booster.predict_one(feats))
     except Exception as e:  # pragma: no cover
         return {
             "disponible": False,
