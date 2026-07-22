@@ -113,11 +113,21 @@ from engine.score_gexscore import (
     compute_spatial_score_geostat,
     valider_dpe_step_log_monotone,
 )
+# AJOUTÉ le 22/07/2026 — signal secondaire XGBoost (feu vert Helen, voir
+# engine/xgboost_divergence.py pour la méthodologie complète et les
+# limites honnêtes). Import isolé + jamais fatal : si xgboost ou le
+# fichier modèle sont absents, get_xgboost_status()/compute_divergence_xgboost()
+# retournent disponible=False plutôt que de faire planter l'API — voir
+# _load_once() dans ce module.
+from engine.xgboost_divergence import (
+    compute_divergence_xgboost,
+    get_status as get_xgboost_status,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.14.0"
+VERSION = "3.15.0"
 
 # ── Sentry SDK — AJOUTÉ le 22/07/2026 (Helen a créé le compte et fourni le
 # DSN via steelldy.sentry.io). Initialisé AVANT la création de l'app FastAPI
@@ -706,6 +716,20 @@ async def health():
     # AJOUTÉ le 22/07/2026 (intégration Sentry) — jamais masquer si le
     # monitoring d'erreurs est réellement actif ou non en production.
     checks["sentry"] = "ok (DSN configure, PII desactivee)" if SENTRY_DSN else "non_configure (SENTRY_DSN absent)"
+    # AJOUTÉ le 22/07/2026 — signal secondaire XGBoost. Honnête sur le R²
+    # CV réel (0.31, plus faible que l'hédonique 0.89 — feature set plus
+    # pauvre, voir engine/xgboost_divergence.py) plutôt que de le masquer.
+    try:
+        xgb_status = get_xgboost_status()
+        if xgb_status.get("disponible"):
+            checks["xgboost_divergence"] = (
+                f"ok (n={xgb_status['n_entrainement']}, R2_cv={xgb_status['r2_cv']}, "
+                f"seuil={xgb_status['seuil_divergence_pct']*100:.1f}%)"
+            )
+        else:
+            checks["xgboost_divergence"] = f"indisponible ({xgb_status.get('erreur')})"
+    except Exception as e:
+        checks["xgboost_divergence"] = f"ERREUR: {e}"
     return {"status": "ok", "version": VERSION, "checks": checks}
 
 
@@ -767,6 +791,36 @@ async def estimate(req: EstimateRequest):
         surface_terrain_ref_m2=surface_terrain_ref,
         type_bien=type_bien,
     )
+
+    # ── 2bis. Signal secondaire XGBoost (challenger model, feu vert Helen
+    #    22/07/2026) — jamais utilisé pour recalculer avm["prix_estime_eur"],
+    #    uniquement un flag informatif de désaccord entre deux modèles
+    #    indépendants (voir engine/xgboost_divergence.py, méthodologie SR
+    #    11-7). N'interrompt jamais /estimate en cas d'erreur/indisponibilité.
+    try:
+        xgb_divergence = compute_divergence_xgboost(
+            prix_m2_hedonique=avm["prix_m2_estime"],
+            surface_m2=req.surface_m2,
+            age_bien=age_bien,
+            annee_mutation=2026,
+            dpe_note=dpe,
+            code_commune=commune_nom,
+            type_bien=type_bien,
+        )
+    except Exception as e:
+        xgb_divergence = {"disponible": False, "erreur": f"exception non geree: {e!r}"}
+    if xgb_divergence.get("flag_divergence"):
+        log.warning(
+            f"[XGBOOST_DIVERGENCE] {commune_nom} {req.surface_m2}m2 DPE={dpe} : "
+            f"hedonique={avm['prix_m2_estime']}EUR/m2 vs xgboost={xgb_divergence['prix_m2_xgboost']}EUR/m2 "
+            f"(divergence={xgb_divergence['divergence_pct']}%, seuil={xgb_divergence['seuil_divergence_pct']}%)"
+        )
+        if SENTRY_DSN:
+            sentry_sdk.capture_message(
+                f"Divergence XGBoost/hedonique : {commune_nom} {xgb_divergence['divergence_pct']}% "
+                f"(seuil {xgb_divergence['seuil_divergence_pct']}%)",
+                level="warning",
+            )
 
     # ── 3. ESG — PARTIEL mais amélioré le 21/07/2026 (point 5/9 - feu vert
     #    Helen). Inondation + argile sont maintenant RÉELS (API Géorisques
@@ -878,6 +932,7 @@ async def estimate(req: EstimateRequest):
             "surface_terrain_m2": req.surface_terrain_m2,
         },
         "merton": merton,
+        "signal_secondaire_xgboost": xgb_divergence,
         "frontalier": frontalier,
         "esg": {
             "esg_score": esg["esg_score"],
