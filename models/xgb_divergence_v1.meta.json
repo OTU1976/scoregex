@@ -1,0 +1,68 @@
+{
+  "version": "xgb_divergence_v1",
+  "date_entrainement": "2026-07-22",
+  "n_transactions_entrainement": 706,
+  "n_transactions_rejetees": 102,
+  "source_donnees": "dpe_regression_sample.csv (DVF Pays de Gex 2014-2025 x ADEME Observatoire DPE, meme jeu que regression age-controlee tache #13)",
+  "feature_names_ordre": [
+    "surface",
+    "age_bien",
+    "annee_mutation",
+    "dpe_ordinal",
+    "commune_01071",
+    "commune_01160",
+    "commune_01173",
+    "commune_01313",
+    "commune_01281",
+    "commune_01354",
+    "commune_01401",
+    "commune_01419",
+    "type_Appartement",
+    "type_Maison"
+  ],
+  "dpe_ordinal_mapping": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3,
+    "E": 4,
+    "F": 5,
+    "G": 6
+  },
+  "communes_ordre": [
+    "01071",
+    "01160",
+    "01173",
+    "01313",
+    "01281",
+    "01354",
+    "01401",
+    "01419"
+  ],
+  "type_local_ordre": [
+    "Appartement",
+    "Maison"
+  ],
+  "hyperparametres": {
+    "objective": "reg:squarederror",
+    "max_depth": 3,
+    "eta": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 5.0,
+    "reg_alpha": 1.0,
+    "min_child_weight": 5,
+    "seed": 42
+  },
+  "num_boost_round": 126,
+  "cv_5fold_out_of_sample": {
+    "r2": 0.3119,
+    "rmse_eur_m2": 1091.0,
+    "mape_pct": 17.98,
+    "biais_moyen_residu_pct": -5.61,
+    "ecart_type_residu_pct": 32.17
+  },
+  "seuil_divergence_pct": 0.6996,
+  "seuil_divergence_methodologie": "abs(biais_moyen_residu) + 2*ecart_type_residu (CV 5-fold out-of-sample, ~95.4% des cas normaux sous ce seuil si residus ~ normaux)",
+  "usage": "SIGNAL SECONDAIRE UNIQUEMENT (flag de divergence, pas remplacement) — voir engine/xgboost_divergence.py"
+}
