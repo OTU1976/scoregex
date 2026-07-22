@@ -19,8 +19,14 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pytest numpy
+          pip install pytest
+          # AJOUTÉ le 22/07/2026 (intégration Sentry) : installe aussi les
+          # dépendances de api/main.py (fastapi, sentry-sdk, etc.) pour que
+          # tests/test_api_main.py puisse importer le module complet en CI
+          # (smoke test) — auparavant seul engine/ était testé, api/main.py
+          # n'était jamais réellement importé avant le déploiement Vercel.
+          pip install -r api/requirements.txt
 
-      - name: Run pytest (moteur engine/)
+      - name: Run pytest (moteur engine/ + api/)
         run: |
           python -m pytest tests/ -v
