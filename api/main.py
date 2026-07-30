@@ -135,7 +135,7 @@ from api.events import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.16.0"
+VERSION = "3.16.1"
 
 # ── Sentry SDK — AJOUTÉ le 22/07/2026 (Helen a créé le compte et fourni le
 # DSN via steelldy.sentry.io). Initialisé AVANT la création de l'app FastAPI
@@ -791,39 +791,53 @@ async def estimate(req: EstimateRequest, authorization: Optional[str] = Header(N
     ne touche pas au quota. Tier 'b2c_free' -> bloqué (402) à la 4e tentative
     (limite_atteinte = nb_utilisees > 3 côté SQL), avec le compteur déjà
     incrémenté à ce moment-là (comportement assumé : la tentative bloquée
-    compte, cf. rapport livré à Helen le 27/07/2026)."""
-    headers = _supabase_headers_for_user(authorization)
-    quota_resp = None
-    try:
-        quota_resp = requests.post(
-            f"{SUPABASE_URL.rstrip('/')}/rest/v1/rpc/incrementer_estimation_gratuite",
-            headers=headers,
-            json={},
-            timeout=8,
-        )
-        quota_resp.raise_for_status()
-        quota_rows = quota_resp.json()
-        quota = quota_rows[0] if quota_rows else None
-    except requests.HTTPError:
-        detail = quota_resp.text[:300] if quota_resp is not None else "erreur inconnue"
-        status = quota_resp.status_code if quota_resp is not None else 502
-        log.error(f"Échec vérification quota estimation ({status}) — {detail}")
-        raise HTTPException(status_code=status if status in (401, 403) else 502, detail=f"Impossible de vérifier ton quota d'estimations : {detail}")
-    except Exception as e:
-        log.error(f"Échec vérification quota estimation ({e})")
-        raise HTTPException(status_code=502, detail=f"Impossible de vérifier ton quota d'estimations : {e}")
+    compte, cf. rapport livré à Helen le 27/07/2026).
 
-    if quota is None:
-        raise HTTPException(status_code=502, detail="Quota d'estimations introuvable (réponse Supabase vide)")
-    if quota.get("limite_atteinte"):
-        raise HTTPException(
-            status_code=402,
-            detail=(
-                "Tu as utilisé tes 3 estimations gratuites. Passe au plan "
-                "Frontalier Pro (99 EUR/mois, estimations illimitées) pour "
-                "continuer — voir /tarifs."
-            ),
-        )
+    CORRECTIF URGENT du 30/07/2026 (incident auto-détecté immédiatement
+    après déploiement, avant tout impact utilisateur mesuré) : la version
+    précédente de ce correctif rendait `authorization` OBLIGATOIRE
+    (401 systématique sans JWT). Ça cassait /estimate pour 100% des
+    visiteurs anonymes, car le frontend (scoregex_app.py) n'attache
+    encore aucun JWT à cet appel — l'UI signup/login (tâche #23) n'est
+    pas construite. Correctif : authorization redevient OPTIONNEL.
+    Sans JWT -> comportement IDENTIQUE à avant (aucune limite, comme
+    un visiteur anonyme). Avec JWT -> quota appliqué normalement. Le
+    gate strict (401 sans compte) ne doit être réactivé qu'une fois le
+    frontend prêt à envoyer le JWT — sinon c'est exactement le même
+    incident qui se reproduit."""
+    if authorization:
+        headers = _supabase_headers_for_user(authorization)
+        quota_resp = None
+        try:
+            quota_resp = requests.post(
+                f"{SUPABASE_URL.rstrip('/')}/rest/v1/rpc/incrementer_estimation_gratuite",
+                headers=headers,
+                json={},
+                timeout=8,
+            )
+            quota_resp.raise_for_status()
+            quota_rows = quota_resp.json()
+            quota = quota_rows[0] if quota_rows else None
+        except requests.HTTPError:
+            detail = quota_resp.text[:300] if quota_resp is not None else "erreur inconnue"
+            status = quota_resp.status_code if quota_resp is not None else 502
+            log.error(f"Échec vérification quota estimation ({status}) — {detail}")
+            raise HTTPException(status_code=status if status in (401, 403) else 502, detail=f"Impossible de vérifier ton quota d'estimations : {detail}")
+        except Exception as e:
+            log.error(f"Échec vérification quota estimation ({e})")
+            raise HTTPException(status_code=502, detail=f"Impossible de vérifier ton quota d'estimations : {e}")
+
+        if quota is None:
+            raise HTTPException(status_code=502, detail="Quota d'estimations introuvable (réponse Supabase vide)")
+        if quota.get("limite_atteinte"):
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    "Tu as utilisé tes 3 estimations gratuites. Passe au plan "
+                    "Frontalier Pro (99 EUR/mois, estimations illimitées) pour "
+                    "continuer — voir /tarifs."
+                ),
+            )
 
     zone_cfg = get_zone_config(req.zone_id)
     type_bien = (req.type_bien or "appartement").lower()
