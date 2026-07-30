@@ -123,11 +123,19 @@ from engine.xgboost_divergence import (
     compute_divergence_xgboost,
     get_status as get_xgboost_status,
 )
+# AJOUTÉ le 27/07/2026 (FEU VERT Helen — "OUI, pour la construction") —
+# logging comportemental interne RGPD-compliant, voir api/events.py.
+from api.events import (
+    ConsentRequest,
+    EventLog,
+    record_consent as _record_consent,
+    log_event as _log_event,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.15.0"
+VERSION = "3.16.0"
 
 # ── Sentry SDK — AJOUTÉ le 22/07/2026 (Helen a créé le compte et fourni le
 # DSN via steelldy.sentry.io). Initialisé AVANT la création de l'app FastAPI
@@ -750,8 +758,73 @@ async def prix_marche():
     }
 
 
+@app.post("/consent")
+async def consent(req: ConsentRequest, authorization: Optional[str] = Header(None)):
+    """AJOUTÉ le 27/07/2026 (FEU VERT Helen — double opt-in RGPD, voir
+    api/events.py::ConsentRequest et le rapport livré à Helen le
+    27/07/2026 sur l'Art. 7.4 RGPD). À appeler une fois à l'inscription
+    (ou depuis les Réglages) — scoregex_app.py ne doit JAMAIS pré-cocher
+    `analyse_comportementale` dans son UI."""
+    return await _record_consent(req, authorization)
+
+
 @app.post("/estimate")
-async def estimate(req: EstimateRequest):
+async def estimate(req: EstimateRequest, authorization: Optional[str] = Header(None)):
+    """
+    AJOUTÉ le 27/07/2026 (FEU VERT explicite Helen — "OUI, OUI et encore OUI,
+    mon CTO pour lier le compteur au compte Supabase Auth déjà en place") :
+    /estimate exige désormais une authentification Supabase Auth et applique
+    le quota de 3 estimations gratuites via la fonction Postgres atomique
+    incrementer_estimation_gratuite() (SECURITY DEFINER, voir migration
+    clients_completude_stripe_quota_rls_provisioning du 26/07/2026).
+
+    Pourquoi côté base plutôt que côté API (n compteur en mémoire) : Vercel
+    serverless ne garde aucun état entre invocations, et un compteur par
+    IP/session serait trivialement contournable (navigation privée). Le
+    compteur vit dans public.clients.nb_estimations_gratuites_utilisees,
+    incrémenté de façon atomique (UPDATE ... RETURNING, une seule requête,
+    pas de lecture-puis-écriture) — donc pas de race condition possible même
+    avec des clics multiples/concurrents du même utilisateur.
+
+    Comportement : tiers != 'b2c_free' (ex. 'institutional', payant) ->
+    jamais bloqué, la fonction SQL incrémente quand même last_active_at mais
+    ne touche pas au quota. Tier 'b2c_free' -> bloqué (402) à la 4e tentative
+    (limite_atteinte = nb_utilisees > 3 côté SQL), avec le compteur déjà
+    incrémenté à ce moment-là (comportement assumé : la tentative bloquée
+    compte, cf. rapport livré à Helen le 27/07/2026)."""
+    headers = _supabase_headers_for_user(authorization)
+    quota_resp = None
+    try:
+        quota_resp = requests.post(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/rpc/incrementer_estimation_gratuite",
+            headers=headers,
+            json={},
+            timeout=8,
+        )
+        quota_resp.raise_for_status()
+        quota_rows = quota_resp.json()
+        quota = quota_rows[0] if quota_rows else None
+    except requests.HTTPError:
+        detail = quota_resp.text[:300] if quota_resp is not None else "erreur inconnue"
+        status = quota_resp.status_code if quota_resp is not None else 502
+        log.error(f"Échec vérification quota estimation ({status}) — {detail}")
+        raise HTTPException(status_code=status if status in (401, 403) else 502, detail=f"Impossible de vérifier ton quota d'estimations : {detail}")
+    except Exception as e:
+        log.error(f"Échec vérification quota estimation ({e})")
+        raise HTTPException(status_code=502, detail=f"Impossible de vérifier ton quota d'estimations : {e}")
+
+    if quota is None:
+        raise HTTPException(status_code=502, detail="Quota d'estimations introuvable (réponse Supabase vide)")
+    if quota.get("limite_atteinte"):
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                "Tu as utilisé tes 3 estimations gratuites. Passe au plan "
+                "Frontalier Pro (99 EUR/mois, estimations illimitées) pour "
+                "continuer — voir /tarifs."
+            ),
+        )
+
     zone_cfg = get_zone_config(req.zone_id)
     type_bien = (req.type_bien or "appartement").lower()
     if type_bien not in ("appartement", "maison"):
@@ -903,6 +976,31 @@ async def estimate(req: EstimateRequest):
         f"{avm['prix_estime_eur']}EUR score={gexscore['gexscore']} "
         f"(frontalier_timeout={frontalier_timed_out})"
     )
+
+    # AJOUTÉ le 27/07/2026 (FEU VERT Helen, point 3 de sa demande — collecte
+    # strictement interne) : logging best-effort de l'événement. JAMAIS
+    # bloquant pour l'utilisateur — un échec de logging ne doit jamais faire
+    # échouer une estimation déjà calculée et payée (quota déjà décrémenté).
+    # Le trigger DB check_consent_before_event() applique consent_verified
+    # selon le VRAI état de consentement ; aucune logique de consentement
+    # n'est dupliquée ici (source de vérité unique = la base).
+    try:
+        await _log_event(
+            EventLog(
+                zone_id=req.zone_id,
+                event_type="recherche_estimation",
+                metadata={
+                    "commune": commune_nom,
+                    "type_bien": type_bien,
+                    "surface_m2": req.surface_m2,
+                    "dpe_note": dpe,
+                    "budget_eur": req.prix_annonce,  # sera bucketizé (jamais stocké exact)
+                },
+            ),
+            authorization,
+        )
+    except Exception as e:
+        log.error(f"[EVENT] logging non-bloquant échoué : {e}")
 
     return JSONResponse({
         "status": "ok",
