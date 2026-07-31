@@ -135,7 +135,7 @@ from api.events import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 log = logging.getLogger("gexscore.api")
 
-VERSION = "3.16.1"
+VERSION = "3.16.2"
 
 # ── Sentry SDK — AJOUTÉ le 22/07/2026 (Helen a créé le compte et fourni le
 # DSN via steelldy.sentry.io). Initialisé AVANT la création de l'app FastAPI
@@ -793,51 +793,75 @@ async def estimate(req: EstimateRequest, authorization: Optional[str] = Header(N
     incrémenté à ce moment-là (comportement assumé : la tentative bloquée
     compte, cf. rapport livré à Helen le 27/07/2026).
 
-    CORRECTIF URGENT du 30/07/2026 (incident auto-détecté immédiatement
-    après déploiement, avant tout impact utilisateur mesuré) : la version
-    précédente de ce correctif rendait `authorization` OBLIGATOIRE
-    (401 systématique sans JWT). Ça cassait /estimate pour 100% des
-    visiteurs anonymes, car le frontend (scoregex_app.py) n'attache
-    encore aucun JWT à cet appel — l'UI signup/login (tâche #23) n'est
-    pas construite. Correctif : authorization redevient OPTIONNEL.
-    Sans JWT -> comportement IDENTIQUE à avant (aucune limite, comme
-    un visiteur anonyme). Avec JWT -> quota appliqué normalement. Le
-    gate strict (401 sans compte) ne doit être réactivé qu'une fois le
-    frontend prêt à envoyer le JWT — sinon c'est exactement le même
-    incident qui se reproduit."""
-    if authorization:
-        headers = _supabase_headers_for_user(authorization)
-        quota_resp = None
-        try:
-            quota_resp = requests.post(
-                f"{SUPABASE_URL.rstrip('/')}/rest/v1/rpc/incrementer_estimation_gratuite",
-                headers=headers,
-                json={},
-                timeout=8,
-            )
-            quota_resp.raise_for_status()
-            quota_rows = quota_resp.json()
-            quota = quota_rows[0] if quota_rows else None
-        except requests.HTTPError:
-            detail = quota_resp.text[:300] if quota_resp is not None else "erreur inconnue"
-            status = quota_resp.status_code if quota_resp is not None else 502
-            log.error(f"Échec vérification quota estimation ({status}) — {detail}")
-            raise HTTPException(status_code=status if status in (401, 403) else 502, detail=f"Impossible de vérifier ton quota d'estimations : {detail}")
-        except Exception as e:
-            log.error(f"Échec vérification quota estimation ({e})")
-            raise HTTPException(status_code=502, detail=f"Impossible de vérifier ton quota d'estimations : {e}")
+    CORRECTIF du 30/07/2026 (incident auto-détecté, corrigé en ~10-15 min) :
+    `authorization` était brièvement redevenu OPTIONNEL, le temps que
+    scoregex_app.py sache attacher un JWT à cet appel (point #2 de la liste
+    des tâches restantes). C'est maintenant fait (commit "feat: JWT sur
+    /estimate + gestion 402 + double opt-in consentement RGPD", 31/07/2026) :
+    le frontend attache le JWT quand l'utilisateur est connecté ET gère
+    explicitement le 401 (invite à créer un compte) et le 402 (invite à
+    passer Pro) sans jamais planter.
 
-        if quota is None:
-            raise HTTPException(status_code=502, detail="Quota d'estimations introuvable (réponse Supabase vide)")
-        if quota.get("limite_atteinte"):
-            raise HTTPException(
-                status_code=402,
-                detail=(
-                    "Tu as utilisé tes 3 estimations gratuites. Passe au plan "
-                    "Frontalier Pro (99 EUR/mois, estimations illimitées) pour "
-                    "continuer — voir /tarifs."
-                ),
-            )
+    RÉACTIVATION du gate strict — 31/07/2026 (FEU VERT explicite Helen, en
+    réaction directe à un test où elle a pu lancer ~10 estimations en régime
+    anonyme : "JE SUIS POUR que chaque visiteur créé un compte et on créé la
+    procédure de s'arrêter l'estimation juste à 3 fois") : `authorization`
+    redevient OBLIGATOIRE (401 sans JWT). Vérifié AVANT cette réactivation,
+    pour ne pas répéter l'incident du 30/07 dans l'autre sens :
+      1. Le frontend attache déjà le JWT ET gère déjà le 401/402 (déployé
+         quelques minutes plus tôt, voir commit ci-dessus) — un visiteur
+         non connecté voit un message clair ("connecte-toi ou crée un
+         compte gratuit"), jamais une erreur brute.
+      2. Le trigger on_auth_user_created_client (AFTER INSERT ON
+         auth.users -> handle_new_user_client()) crée automatiquement une
+         ligne public.clients (tier='b2c_free',
+         nb_estimations_gratuites_utilisees=0 par défaut, colonne NOT NULL)
+         DÈS l'inscription — vérifié en direct sur Supabase le 31/07/2026
+         (pg_get_functiondef + information_schema.columns) — donc un
+         compte tout juste créé ne peut PAS tomber sur l'exception 'client
+         introuvable' de incrementer_estimation_gratuite() à sa 1ère
+         estimation.
+      3. État réel de la base au moment de la réactivation (vérifié en
+         direct, pas supposé) : 1 seul compte existant, tier='institutional'
+         (illimité par design), 0 estimation utilisée — AUCUN compte
+         b2c_free préexistant. Aucun utilisateur n'est donc bloqué
+         rétroactivement par ce changement, et les ~10 estimations qu'Helen
+         a pu lancer avant ce correctif n'ont jamais touché ce compteur
+         (gate encore optionnel + frontend n'attachait aucun JWT à ce
+         moment-là) — aucune remise à zéro de compteur n'était nécessaire.
+    """
+    headers = _supabase_headers_for_user(authorization)
+    quota_resp = None
+    try:
+        quota_resp = requests.post(
+            f"{SUPABASE_URL.rstrip('/')}/rest/v1/rpc/incrementer_estimation_gratuite",
+            headers=headers,
+            json={},
+            timeout=8,
+        )
+        quota_resp.raise_for_status()
+        quota_rows = quota_resp.json()
+        quota = quota_rows[0] if quota_rows else None
+    except requests.HTTPError:
+        detail = quota_resp.text[:300] if quota_resp is not None else "erreur inconnue"
+        status = quota_resp.status_code if quota_resp is not None else 502
+        log.error(f"Échec vérification quota estimation ({status}) — {detail}")
+        raise HTTPException(status_code=status if status in (401, 403) else 502, detail=f"Impossible de vérifier ton quota d'estimations : {detail}")
+    except Exception as e:
+        log.error(f"Échec vérification quota estimation ({e})")
+        raise HTTPException(status_code=502, detail=f"Impossible de vérifier ton quota d'estimations : {e}")
+
+    if quota is None:
+        raise HTTPException(status_code=502, detail="Quota d'estimations introuvable (réponse Supabase vide)")
+    if quota.get("limite_atteinte"):
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                "Tu as utilisé tes 3 estimations gratuites. Passe au plan "
+                "Frontalier Pro (99 EUR/mois, estimations illimitées) pour "
+                "continuer — voir /tarifs."
+            ),
+        )
 
     zone_cfg = get_zone_config(req.zone_id)
     type_bien = (req.type_bien or "appartement").lower()
