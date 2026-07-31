@@ -235,8 +235,30 @@ def compute_avm_hedonique(
     # Bonus école internationale
     adj["ecole_intl"] = betas["ecole_intl_bonus"] if ecole_intl_500m else 0.0
 
-    # Pénalité désert médical
-    adj["medical"] = betas["desert_medical_penalty"] if desert_medical else 0.0
+    # Pénalité désert médical — RECALIBRÉ le 31/07/2026 (FEU VERT Helen,
+    # "trouve un consensus logique et baisse le %" — régression réelle
+    # exigée plutôt qu'un ajustement arbitraire). Régression log(prix_m2) ~
+    # effets fixes commune + DPE + log(surface) + dummy désert médical,
+    # erreurs-types robustes HC1, sur les 1004 transactions géocodées +
+    # DPE réel ADEME (voir data/backtest_frontalier_dataset.csv,
+    # 31/07/2026) :
+    #   - Appartement (n=746) : beta = -0.0904 (SE=0.0349, t=-2.59,
+    #     p=0.010) -> statistiquement significatif, très proche de
+    #     l'ancienne valeur unique -8.9% : conservée telle quelle pour ce
+    #     type (voir desert_medical_penalty ci-dessous, sert de valeur
+    #     appartement/défaut).
+    #   - Maison (n=258) : beta = +0.0609 (SE=0.0495, t=+1.23, p=0.219)
+    #     -> signe OPPOSÉ et non significatif. Explication probable :
+    #     confusion — les maisons en désert médical du Pays de Gex sont
+    #     aussi typiquement les plus rurales/grands terrains (effet prix
+    #     positif non contrôlé dans cette spécification). Appliquer -8.9%
+    #     aux maisons n'est PAS supporté par la donnée réelle -> neutralisé
+    #     (0.0) pour ce type via desert_medical_penalty_by_type, en
+    #     attendant un échantillon Maison plus large (extension DVF
+    #     pré-2025) permettant un contrôle plus fin.
+    desert_medical_penalty_by_type = betas.get("desert_medical_penalty_by_type") or {}
+    medical_penalty = desert_medical_penalty_by_type.get(type_key, betas.get("desert_medical_penalty"))
+    adj["medical"] = medical_penalty if desert_medical else 0.0
 
     # Dépréciation par âge (< 5 ans = neuf = +5%, > 30 ans = -3%/10 ans)
     if age_bien < 5:

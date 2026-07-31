@@ -139,7 +139,7 @@ def estimate_noise_score(
 ) -> float:
     """
     Estime le score bruit [0-100] (100 = calme, 0 = très bruyant).
-    
+
     MVP : proxy géométrique basé sur distance à l'A40 et aux couloirs GVA.
     Production : remplacer par API Bruitparif ou données IGN bruit LDEN.
 
@@ -171,16 +171,26 @@ def count_amenities_nearby(
     lat: float,
     lon: float,
     amenity_type: str,
-    radius_m: int = 500
+    radius_m: int = 500,
+    tag_key: str = "amenity",
 ) -> int:
     """
     Compte les équipements OSM (écoles, commerces, etc.) dans un rayon.
     amenity_type : "school" | "supermarket" | "pharmacy" | "bank" | etc.
+    tag_key : clé OSM à interroger — CORRIGÉ le 31/07/2026 (FEU VERT Helen,
+    "le score des supermarchés est hyper bien, on l'introduit") : les
+    supermarchés réels sont tagués `shop=supermarket` dans OSM, PAS
+    `amenity=supermarket` (qui n'existe pas et ne matche donc jamais rien —
+    confirmé : 0 résultat sur tout le Pays de Gex lors du backtest du
+    31/07/2026 alors que des supermarchés existent physiquement). Ce
+    paramètre permet à `score_services` de passer `tag_key="shop"` pour
+    ce cas précis, sans casser les appels existants (pharmacy/school
+    restent bien tagués `amenity=...`).
     """
     api = overpy.Overpass()
     query = f"""
         [out:json][timeout:8];
-        node["amenity"="{amenity_type}"](around:{radius_m},{lat},{lon});
+        node["{tag_key}"="{amenity_type}"](around:{radius_m},{lat},{lon});
         out count;
     """
     try:
@@ -189,7 +199,7 @@ def count_amenities_nearby(
             return int(result.nodes[0].tags.get("count", "0"))
         return 0
     except Exception as e:
-        log.debug(f"OSM {amenity_type} ({lat:.4f},{lon:.4f}) : {e}")
+        log.debug(f"OSM {tag_key}={amenity_type} ({lat:.4f},{lon:.4f}) : {e}")
         return 0
 
 
@@ -200,14 +210,22 @@ def score_services(
 ) -> float:
     """
     Score services [0-100] : commerces, écoles, pharmacies dans 500m.
+
+    RAPPEL IMPORTANT (31/07/2026) : ce score est purement AFFICHÉ à
+    l'utilisateur (composante de score_frontalier) — il n'entre JAMAIS
+    dans compute_avm_hedonique et n'a donc aucune influence sur le prix
+    estimé. Le corriger (tag OSM) n'a donc aucun risque de faire bouger
+    une estimation, uniquement le score affiché.
     """
     scores = []
 
-    # Commerces alimentaires (proxy vie quotidienne)
-    nb_shops = count_amenities_nearby(lat, lon, "supermarket", 1000)
+    # Commerces alimentaires (proxy vie quotidienne) — CORRIGÉ le
+    # 31/07/2026 : tag réel OSM = shop=supermarket, pas amenity=supermarket
+    # (voir docstring de count_amenities_nearby).
+    nb_shops = count_amenities_nearby(lat, lon, "supermarket", 1000, tag_key="shop")
     scores.append(min(100.0, nb_shops * 25))
 
-    # Pharmacies
+    # Pharmacies (tag OSM correct, amenity=pharmacy — inchangé)
     nb_pharma = count_amenities_nearby(lat, lon, "pharmacy", 1000)
     scores.append(min(100.0, nb_pharma * 40))
 
