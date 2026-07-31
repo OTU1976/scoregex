@@ -185,11 +185,46 @@ hedonic_betas:
   #     variation de distance devient plus large et mieux identifiable.
   distance_gva_per_min: 0.0
   threshold_gva_min: 15.0    # Minutes — conservé (sans effet si beta=0), utile si beta3 réévalué plus tard
-  bruit_a40_penalty: -0.163  # Si bruit LDEN > 65 dB
-  bruit_gva_penalty: -0.082  # Si bruit avions GVA > 55 dB
+
+  # bruit_a40_penalty — AUDITÉ le 31/07/2026 (FEU VERT Helen, "le %
+  # semble énorme, trouve un consensus logique"). Constat vérifié sur les
+  # 1004 transactions géocodées réelles + score_bruit calculé (formule
+  # geométrique estimate_noise_score) : AUCUNE des 1004 transactions
+  # réelles du Pays de Gex n'a un score_bruit < 50 (le seuil qui
+  # déclenche cette pénalité dans compute_avm_hedonique). Ce levier est
+  # donc actuellement INERTE — il ne s'applique JAMAIS à une estimation
+  # réelle dans cette zone, quel que soit son adresse, avec la géométrie
+  # actuelle de la formule proxy. Ce n'est pas un problème de "% trop
+  # gros" (il ne s'applique jamais, donc son ampleur est sans
+  # conséquence aujourd'hui) mais un problème de proxy géométrique
+  # décorrélé du bruit réel LDEN de la zone. Valeur laissée inchangée
+  # (recalibrer un chiffre qui ne s'applique jamais serait arbitraire) —
+  # priorité réelle : brancher une vraie source (Bruitparif ou IGN bruit
+  # LDEN, déjà notée comme le remplacement "production" prévu dans
+  # engine/score_frontalier.py::estimate_noise_score) avant toute
+  # tentative de recalibrage chiffré.
+  bruit_a40_penalty: -0.163  # Si bruit LDEN > 65 dB — INERTE dans cette zone, voir note ci-dessus (31/07/2026)
+  bruit_gva_penalty: -0.082  # Si bruit avions GVA > 55 dB — idem, jamais déclenché à ce stade
   vue_leman_bonus: 0.112     # Proxy altitude IGN > 520m
   ecole_intl_bonus: 0.071    # École internationale < 500m
-  desert_medical_penalty: -0.089  # 0 médecin < 10min
+
+  # desert_medical_penalty — RECALIBRÉ le 31/07/2026 (FEU VERT Helen,
+  # régression réelle exigée). log(prix_m2) ~ effets fixes commune + DPE
+  # + log(surface) + dummy désert médical, HC1, sur 1004 transactions
+  # géocodées + DPE ADEME réel :
+  #   - Appartement (n=746) : beta=-0.0904 (SE=0.0349, t=-2.59, p=0.010)
+  #     -> significatif, très proche de la valeur historique -8.9% :
+  #     CONSERVÉE (sert de valeur par défaut ci-dessous).
+  #   - Maison (n=258) : beta=+0.0609 (SE=0.0495, t=+1.23, p=0.219) ->
+  #     signe opposé, non significatif (confusion probable : les maisons
+  #     en désert médical du Pays de Gex sont aussi les plus rurales/
+  #     grands terrains, effet prix positif non contrôlé ici). Appliquer
+  #     -8.9% aux maisons n'est PAS supporté par la donnée réelle ->
+  #     neutralisé à 0.0 pour ce type, à réévaluer avec un échantillon
+  #     Maison plus large (extension DVF pré-2025, en cours).
+  desert_medical_penalty: -0.089  # 0 médecin < 10min — valeur Appartement/défaut, validée par régression réelle (t=-2.59)
+  desert_medical_penalty_by_type:
+    maison: 0.0    # Neutralisé le 31/07/2026 — non supporté par la régression réelle (signe opposé, p=0.219)
   frontalier_premium_max: 0.187   # Premium max (Ferney/Cessy)
   ndvi_bonus_per_unit: 0.04  # NDVI > 0.4 → +4% (Planet Labs)
 
