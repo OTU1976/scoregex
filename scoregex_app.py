@@ -1,4 +1,3 @@
-
 """
 ScoreGex — Plateforme Quantitative d'Évaluation Immobilière
 Pays de Gex — Genève Frontalier
@@ -39,6 +38,35 @@ try:
     SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY", "")
 except Exception:
     SUPABASE_URL, SUPABASE_ANON_KEY = "", ""
+
+
+# AJOUTÉ le 31/07/2026 (FEU VERT Helen — double opt-in RGPD Art. 7.4, point
+# #2 de la liste : "UI signup/login + gestion du 402"). Envoie le choix de
+# consentement au double opt-in vers POST /consent (api/events.py::
+# ConsentRequest). Best-effort et JAMAIS bloquant : un échec ici ne doit
+# jamais empêcher l'inscription/connexion elle-même (voir
+# st.session_state.pending_consent plus bas, qui réessaie automatiquement
+# au prochain rerun si l'envoi immédiat échoue, ex. compte pas encore
+# confirmé par email donc pas encore de JWT disponible).
+def envoyer_consent(access_token: str, analyse_comportementale: bool, cgu_version: str = "1.0.0") -> bool:
+    """POST /consent avec le JWT Supabase de l'utilisateur. Retourne True si
+    l'API a confirmé l'enregistrement (200), False sinon (jamais d'exception
+    remontée à l'appelant)."""
+    try:
+        r = requests.post(
+            f"{API_BASE}/consent",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "usage_essentiel": True,
+                "analyse_comportementale": analyse_comportementale,
+                "cgu_version": cgu_version,
+            },
+            timeout=8,
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
 
 # TODO Helen : remplace ces deux liens par tes vrais Stripe Payment Links
 # avant mise en prod (Stripe Dashboard > Payment Links > créer un lien pour
@@ -814,6 +842,20 @@ if "page" not in st.session_state:
     st.session_state.page = "home"
 if "result" not in st.session_state:
     st.session_state.result = None
+if "pending_consent" not in st.session_state:
+    st.session_state.pending_consent = None
+
+# AJOUTÉ le 31/07/2026 (double opt-in RGPD, FEU VERT Helen — point #2) :
+# si un consentement est en attente (ex. inscription nécessitant une
+# confirmation email, donc pas encore de JWT au moment du clic "Créer mon
+# compte") ET que l'utilisateur est maintenant connecté (JWT disponible,
+# obtenu via une connexion normale ensuite), on l'envoie à /consent ici --
+# ce bloc s'exécute à chaque rerun tant que le consentement n'a pas été
+# envoyé avec succès.
+if st.session_state.pending_consent and st.session_state.get("auth"):
+    _pc = st.session_state.pending_consent
+    if envoyer_consent(st.session_state.auth["access_token"], _pc["analyse_comportementale"], _pc.get("cgu_version", "1.0.0")):
+        st.session_state.pending_consent = None
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 # MODIF 11/07/2026 : anciennement du HTML statique (<span>) sans aucune
@@ -933,29 +975,48 @@ with st.sidebar:
         with tab_signup:
             signup_email = st.text_input("Email", key="signup_email")
             signup_pwd = st.text_input("Mot de passe (8 caractères min.)", type="password", key="signup_pwd")
+            # AJOUTÉ le 31/07/2026 (double opt-in RGPD Art. 7.4 — FEU VERT
+            # Helen 27/07/2026, voir api/events.py::ConsentRequest).
+            # "usage_essentiel" reste nécessaire à la création du compte
+            # (CGU / Politique de confidentialité) ; "analyse_comportementale"
+            # est STRICTEMENT optionnel et JAMAIS pré-coché (value=False).
+            consent_cgu = st.checkbox("J'accepte les CGU et la Politique de confidentialité (obligatoire)", value=False, key="consent_cgu_signup")
+            consent_comportemental = st.checkbox("J'autorise l'analyse de mon usage pour améliorer ScoreGex (optionnel)", value=False, key="consent_comportemental_signup")
             if st.button("Créer mon compte", key="btn_signup", use_container_width=True):
-                try:
-                    r = requests.post(
-                        f"{SUPABASE_URL.rstrip('/')}/auth/v1/signup",
-                        headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
-                        json={"email": signup_email, "password": signup_pwd},
-                        timeout=10,
-                    )
-                    body = r.json()
-                    if r.status_code in (200, 201) and body.get("access_token"):
-                        st.session_state.auth = {
-                            "access_token": body["access_token"],
-                            "email": body.get("user", {}).get("email", signup_email),
-                            "user_id": body.get("user", {}).get("id"),
+                if not consent_cgu:
+                    st.error("Merci d'accepter les CGU et la Politique de confidentialité pour créer un compte.")
+                else:
+                    try:
+                        r = requests.post(
+                            f"{SUPABASE_URL.rstrip('/')}/auth/v1/signup",
+                            headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
+                            json={"email": signup_email, "password": signup_pwd},
+                            timeout=10,
+                        )
+                        body = r.json()
+                        st.session_state.pending_consent = {
+                            "usage_essentiel": True,
+                            "analyse_comportementale": consent_comportemental,
+                            "cgu_version": "1.0.0",
                         }
-                        st.success("Compte créé et connecté.")
-                        st.rerun()
-                    elif r.status_code in (200, 201):
-                        st.success("Compte créé — vérifie ta boîte mail pour confirmer l'adresse avant de te connecter.")
-                    else:
-                        st.error(f"Échec de la création : {body.get('error_description') or body.get('msg') or r.status_code}")
-                except Exception as e:
-                    st.error(f"Connexion impossible : {e}")
+                        if r.status_code in (200, 201) and body.get("access_token"):
+                            st.session_state.auth = {
+                                "access_token": body["access_token"],
+                                "email": body.get("user", {}).get("email", signup_email),
+                                "user_id": body.get("user", {}).get("id"),
+                            }
+                            envoyer_consent(body["access_token"], consent_comportemental)
+                            st.session_state.pending_consent = None
+                            st.success("Compte créé et connecté.")
+                            st.rerun()
+                        elif r.status_code in (200, 201):
+                            st.success("Compte créé — vérifie ta boîte mail pour confirmer l'adresse avant de te connecter. Ton choix de consentement sera enregistré automatiquement dès ta première connexion.")
+                        else:
+                            st.session_state.pending_consent = None
+                            st.error(f"Échec de la création : {body.get('error_description') or body.get('msg') or r.status_code}")
+                    except Exception as e:
+                        st.session_state.pending_consent = None
+                        st.error(f"Connexion impossible : {e}")
 
     st.markdown("---")
     st.markdown(html_block("""
@@ -1200,9 +1261,43 @@ elif st.session_state.page == "estimate":
                     if surface_terrain:
                         payload["surface_terrain_m2"] = float(surface_terrain)
 
-                    r = requests.post(f"{API_BASE}/estimate", json=payload, timeout=10)
+                    # AJOUTÉ le 31/07/2026 (FEU VERT Helen — point #2 : "UI
+                    # signup/login + gestion du 402"). JWT Supabase attaché
+                    # quand l'utilisateur est connecté, pour que le quota de
+                    # 3 estimations gratuites (RPC
+                    # incrementer_estimation_gratuite, côté api/main.py) soit
+                    # réellement appliqué. Un visiteur NON connecté n'envoie
+                    # toujours aucun header -> comportement identique à avant
+                    # (aucune limite tant qu'il ne s'est pas identifié) : le
+                    # gate strict côté API reste volontairement optionnel
+                    # (voir api/main.py `if authorization:`, correctif du
+                    # 30/07/2026) tant que ce point n'est pas explicitement
+                    # validé avec Helen.
+                    _estimate_headers = {}
+                    if st.session_state.get("auth"):
+                        _estimate_headers["Authorization"] = f"Bearer {st.session_state.auth['access_token']}"
+
+                    r = requests.post(f"{API_BASE}/estimate", json=payload, headers=_estimate_headers, timeout=10)
                     if r.status_code == 200:
                         st.session_state.result = r.json()
+                    elif r.status_code == 402:
+                        # AJOUTÉ le 31/07/2026 : gestion explicite du quota
+                        # gratuit dépassé. Le message vient directement de
+                        # l'API (api/main.py::/estimate) -- jamais réécrit
+                        # ici, pour garder une seule source de vérité sur les
+                        # conditions du plan gratuit.
+                        try:
+                            _detail_402 = r.json().get("detail", "Quota d'estimations gratuites atteint.")
+                        except Exception:
+                            _detail_402 = "Quota d'estimations gratuites atteint."
+                        st.warning(f"🔒 {_detail_402}")
+                        st.link_button("Passer au plan Frontalier Pro (99 EUR/mois)", STRIPE_LINK_FRONTALIER_PRO, use_container_width=True)
+                    elif r.status_code == 401:
+                        if st.session_state.get("auth"):
+                            st.error("Session expirée — reconnecte-toi (bouton Connexion en haut de page) puis relance le calcul.")
+                            st.session_state.auth = None
+                        else:
+                            st.warning("Connecte-toi ou crée un compte gratuit (bouton Connexion en haut de page) pour bénéficier de tes 3 estimations gratuites.")
                     else:
                         st.error(f"Erreur API : {r.status_code}")
                 except Exception as e:
@@ -1500,29 +1595,43 @@ elif st.session_state.page == "account":
             with tab_signup_page:
                 signup_email_page = st.text_input("Email", key="signup_email_page")
                 signup_pwd_page = st.text_input("Mot de passe (8 caractères min.)", type="password", key="signup_pwd_page")
+                consent_cgu_page = st.checkbox("J'accepte les CGU et la Politique de confidentialité (obligatoire)", value=False, key="consent_cgu_signup_page")
+                consent_comportemental_page = st.checkbox("J'autorise l'analyse de mon usage pour améliorer ScoreGex (optionnel)", value=False, key="consent_comportemental_signup_page")
                 if st.button("Créer mon compte", key="btn_signup_page", use_container_width=True):
-                    try:
-                        r = requests.post(
-                            f"{SUPABASE_URL.rstrip('/')}/auth/v1/signup",
-                            headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
-                            json={"email": signup_email_page, "password": signup_pwd_page},
-                            timeout=10,
-                        )
-                        body = r.json()
-                        if r.status_code in (200, 201) and body.get("access_token"):
-                            st.session_state.auth = {
-                                "access_token": body["access_token"],
-                                "email": body.get("user", {}).get("email", signup_email_page),
-                                "user_id": body.get("user", {}).get("id"),
+                    if not consent_cgu_page:
+                        st.error("Merci d'accepter les CGU et la Politique de confidentialité pour créer un compte.")
+                    else:
+                        try:
+                            r = requests.post(
+                                f"{SUPABASE_URL.rstrip('/')}/auth/v1/signup",
+                                headers={"apikey": SUPABASE_ANON_KEY, "Content-Type": "application/json"},
+                                json={"email": signup_email_page, "password": signup_pwd_page},
+                                timeout=10,
+                            )
+                            body = r.json()
+                            st.session_state.pending_consent = {
+                                "usage_essentiel": True,
+                                "analyse_comportementale": consent_comportemental_page,
+                                "cgu_version": "1.0.0",
                             }
-                            st.success("Compte créé et connecté.")
-                            st.rerun()
-                        elif r.status_code in (200, 201):
-                            st.success("Compte créé — vérifie ta boîte mail pour confirmer l'adresse avant de te connecter.")
-                        else:
-                            st.error(f"Échec de la création : {body.get('error_description') or body.get('msg') or r.status_code}")
-                    except Exception as e:
-                        st.error(f"Connexion impossible : {e}")
+                            if r.status_code in (200, 201) and body.get("access_token"):
+                                st.session_state.auth = {
+                                    "access_token": body["access_token"],
+                                    "email": body.get("user", {}).get("email", signup_email_page),
+                                    "user_id": body.get("user", {}).get("id"),
+                                }
+                                envoyer_consent(body["access_token"], consent_comportemental_page)
+                                st.session_state.pending_consent = None
+                                st.success("Compte créé et connecté.")
+                                st.rerun()
+                            elif r.status_code in (200, 201):
+                                st.success("Compte créé — vérifie ta boîte mail pour confirmer l'adresse avant de te connecter. Ton choix de consentement sera enregistré automatiquement dès ta première connexion.")
+                            else:
+                                st.session_state.pending_consent = None
+                                st.error(f"Échec de la création : {body.get('error_description') or body.get('msg') or r.status_code}")
+                        except Exception as e:
+                            st.session_state.pending_consent = None
+                            st.error(f"Connexion impossible : {e}")
 
 
 # ════════════════════════════════════════════════════════════════════════════════
