@@ -1,7 +1,7 @@
 """
 ScoreGex — Plateforme Quantitative d'Évaluation Immobilière
 Pays de Gex — Genève Frontalier
-Design : noir #0F241A + vert #4FA37A + blanc cassé #F5F0E8
+Design : noir #0A1F1F + vert #4ADE80 + blanc cassé #FFFFFF
 """
 
 import streamlit as st
@@ -135,9 +135,9 @@ def generer_rapport_pdf(res: dict, contexte: dict, branded: bool = False) -> byt
     from reportlab.lib.colors import HexColor
     from reportlab.pdfgen import canvas as _canvas
 
-    VERT_FONCE = HexColor("#0F241A")
-    VERT = HexColor("#4FA37A")
-    BLANC = HexColor("#F5F0E8")
+    VERT_FONCE = HexColor("#0A1F1F")
+    VERT = HexColor("#4ADE80")
+    BLANC = HexColor("#FFFFFF")
     GRIS = HexColor("#555555")
 
     buf = io.BytesIO()
@@ -168,7 +168,7 @@ def generer_rapport_pdf(res: dict, contexte: dict, branded: bool = False) -> byt
     titre_rapport = "Rapport de Négociation Immobilière" if branded else "Rapport d'Estimation"
     c.drawString(40, height - 75, titre_rapport)
     c.setFont("Helvetica", 8)
-    c.setFillColor(HexColor("#9ab8a8"))
+    c.setFillColor(HexColor("rgba(255,255,255,0.65)"))
     c.drawString(40, height - 92, f"Généré le {time.strftime('%d/%m/%Y')} — Steelldy SAS — Données DVF réelles DGFiP 2014-2025")
 
     y = height - 150
@@ -301,17 +301,17 @@ def html_block(s: str) -> str:
 # ── CSS Global ────────────────────────────────────────────────────────────────
 st.markdown(html_block("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 /* Reset & base */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, [data-testid="stAppViewContainer"] {
-    background-color: #0F241A !important;
-    color: #F5F0E8 !important;
+    background-color: #0A1F1F !important;
+    color: #FFFFFF !important;
     font-family: 'Inter', sans-serif;
 }
 [data-testid="stHeader"] { background: transparent !important; }
-[data-testid="stSidebar"] { background: #111111 !important; }
+[data-testid="stSidebar"] { background: #0F2E2E !important; }
 .block-container { padding: 0 !important; max-width: 100% !important; }
 section[data-testid="stMain"] > div { padding: 0 !important; }
 
@@ -320,13 +320,13 @@ section[data-testid="stMain"] > div { padding: 0 !important; }
 [data-testid="stToolbar"] { display: none; }
 
 /* Typography */
-.sg-display { font-family: 'Playfair Display', serif; }
-.sg-mono { font-family: 'Courier New', monospace; }
+.sg-display { font-family: 'Inter', sans-serif; }
+.sg-mono { font-family: 'JetBrains Mono', monospace; }
 
 /* Navigation */
 .sg-nav {
     background: rgba(10,10,10,0.95);
-    border-bottom: 1px solid #1E3A29;
+    border-bottom: 1px solid #1A3A3A;
     padding: 0 3rem;
     height: 64px;
     display: flex;
@@ -338,16 +338,16 @@ section[data-testid="stMain"] > div { padding: 0 !important; }
     backdrop-filter: blur(12px);
 }
 .sg-logo {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', sans-serif;
     font-size: 1.4rem;
     font-weight: 700;
-    color: #4FA37A;
+    color: #4ADE80;
     letter-spacing: 0.05em;
 }
-.sg-logo span { color: #F5F0E8; font-weight: 300; }
+.sg-logo span { color: #FFFFFF; font-weight: 300; }
 .sg-nav-links { display: flex; gap: 2rem; align-items: center; }
 .sg-nav-link {
-    color: #888;
+    color: rgba(255,255,255,0.5);
     text-decoration: none;
     font-size: 0.85rem;
     font-weight: 500;
@@ -356,8 +356,8 @@ section[data-testid="stMain"] > div { padding: 0 !important; }
     transition: color 0.2s;
 }
 .sg-badge {
-    background: #4FA37A;
-    color: #0F241A;
+    background: #4ADE80;
+    color: #0A1F1F;
     font-size: 0.7rem;
     font-weight: 700;
     padding: 0.3rem 0.8rem;
@@ -374,7 +374,7 @@ section[data-testid="stMain"] > div { padding: 0 !important; }
    plutôt qu'à des boutons dorés pleins. */
 div.st-key-topnav {
     background: rgba(10,10,10,0.96);
-    border-bottom: 1px solid #1E3A29;
+    border-bottom: 1px solid #1A3A3A;
     padding: 0.6rem 2rem 0.3rem;
     position: sticky;
     top: 0;
@@ -383,7 +383,7 @@ div.st-key-topnav {
 }
 div.st-key-topnav .stButton button {
     background: transparent !important;
-    color: #999 !important;
+    color: rgba(255,255,255,0.6) !important;
     border: none !important;
     box-shadow: none !important;
     font-size: 0.82rem !important;
@@ -393,11 +393,11 @@ div.st-key-topnav .stButton button {
     padding: 0.5rem 0.3rem !important;
 }
 div.st-key-topnav .stButton button:hover {
-    color: #4FA37A !important;
-    background: rgba(79,163,122,0.08) !important;
+    color: #4ADE80 !important;
+    background: rgba(74,222,128,0.08) !important;
 }
 div.st-key-topnav .stButton button:focus:not(:active) {
-    color: #4FA37A !important;
+    color: #4ADE80 !important;
     border: none !important;
     box-shadow: none !important;
 }
@@ -406,7 +406,7 @@ div.st-key-topnav .stButton button:focus:not(:active) {
    l'ancienne top-nav -- c'etaient des <span> statiques sans destination). */
 div.st-key-footernav .stButton button {
     background: transparent !important;
-    color: #777 !important;
+    color: rgba(255,255,255,0.55) !important;
     border: none !important;
     box-shadow: none !important;
     font-size: 0.78rem !important;
@@ -414,19 +414,19 @@ div.st-key-footernav .stButton button {
     width: auto !important;
 }
 div.st-key-footernav .stButton button:hover {
-    color: #4FA37A !important;
+    color: #4ADE80 !important;
     background: transparent !important;
 }
 div.st-key-footernav a[kind="secondary"], div.st-key-footernav .stLinkButton a {
     background: transparent !important;
-    color: #777 !important;
+    color: rgba(255,255,255,0.55) !important;
     border: none !important;
     box-shadow: none !important;
     font-size: 0.78rem !important;
     font-weight: 400 !important;
 }
 div.st-key-footernav a[kind="secondary"]:hover, div.st-key-footernav .stLinkButton a:hover {
-    color: #4FA37A !important;
+    color: #4ADE80 !important;
 }
 
 /* MODIF 15/07/2026 : refonte du nav sidebar -- l'ancien CSS global
@@ -437,7 +437,7 @@ div.st-key-footernav a[kind="secondary"]:hover, div.st-key-footernav .stLinkButt
    type="primary" (rendu different du type="secondary" par defaut). */
 div.st-key-sidenav .stButton button[kind="secondary"] {
     background: transparent !important;
-    color: #9ab8a8 !important;
+    color: rgba(255,255,255,0.65) !important;
     border: none !important;
     border-left: 3px solid transparent !important;
     box-shadow: none !important;
@@ -451,15 +451,15 @@ div.st-key-sidenav .stButton button[kind="secondary"] {
     transition: all 0.15s ease !important;
 }
 div.st-key-sidenav .stButton button[kind="secondary"]:hover {
-    background: rgba(79,163,122,0.10) !important;
+    background: rgba(74,222,128,0.10) !important;
     border-left-color: #2C4C38 !important;
-    color: #F5F0E8 !important;
+    color: #FFFFFF !important;
 }
 div.st-key-sidenav .stButton button[kind="primary"] {
-    background: rgba(79,163,122,0.14) !important;
-    color: #F5F0E8 !important;
+    background: rgba(74,222,128,0.14) !important;
+    color: #FFFFFF !important;
     border: none !important;
-    border-left: 3px solid #4FA37A !important;
+    border-left: 3px solid #4ADE80 !important;
     box-shadow: none !important;
     text-transform: none !important;
     letter-spacing: 0.02em !important;
@@ -473,27 +473,27 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
 
 /* Bannière d'avertissement sur les pages legales (brouillon, pas relu par un juriste) */
 .sg-legal-disclaimer {
-    background: rgba(79,163,122,0.08);
-    border: 1px solid rgba(79,163,122,0.3);
+    background: rgba(74,222,128,0.08);
+    border: 1px solid rgba(74,222,128,0.3);
     border-radius: 4px;
     padding: 1rem 1.5rem;
     font-size: 0.82rem;
-    color: #9ab8a8;
+    color: rgba(255,255,255,0.65);
     margin-bottom: 2rem;
     line-height: 1.6;
 }
 .sg-legal-body {
     font-size: 0.9rem;
-    color: #C0B89A;
+    color: rgba(255,255,255,0.75);
     line-height: 1.8;
 }
 .sg-legal-body h3 {
-    font-family: 'Playfair Display', serif;
-    color: #F5F0E8;
+    font-family: 'Inter', sans-serif;
+    color: #FFFFFF;
     font-size: 1.2rem;
     margin: 2rem 0 0.75rem;
 }
-.sg-legal-body strong { color: #F5F0E8; }
+.sg-legal-body strong { color: #FFFFFF; }
 
 /* Hero */
 .sg-hero {
@@ -511,7 +511,7 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: radial-gradient(ellipse 60% 50% at 50% 30%, rgba(79,163,122,0.06) 0%, transparent 70%);
+    background: radial-gradient(ellipse 60% 50% at 50% 30%, rgba(74,222,128,0.06) 0%, transparent 70%);
     pointer-events: none;
 }
 .sg-eyebrow {
@@ -519,7 +519,7 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     font-weight: 600;
     letter-spacing: 0.25em;
     text-transform: uppercase;
-    color: #4FA37A;
+    color: #4ADE80;
     margin-bottom: 1.5rem;
     display: flex;
     align-items: center;
@@ -529,22 +529,22 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     content: '';
     width: 40px;
     height: 1px;
-    background: #4FA37A;
+    background: #4ADE80;
     opacity: 0.5;
 }
 .sg-h1 {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', sans-serif;
     font-size: clamp(2.8rem, 6vw, 5.5rem);
     font-weight: 700;
     line-height: 1.08;
-    color: #F5F0E8;
+    color: #FFFFFF;
     max-width: 900px;
     margin-bottom: 1.5rem;
 }
-.sg-h1 em { color: #4FA37A; font-style: normal; }
+.sg-h1 em { color: #4ADE80; font-style: normal; }
 .sg-sub {
     font-size: 1.1rem;
-    color: #777;
+    color: rgba(255,255,255,0.55);
     max-width: 560px;
     line-height: 1.7;
     margin-bottom: 3rem;
@@ -556,22 +556,22 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     align-items: center;
     margin-top: 3rem;
     padding-top: 3rem;
-    border-top: 1px solid #1E3A29;
+    border-top: 1px solid #1A3A3A;
 }
 .sg-stat { text-align: center; }
 .sg-stat-num {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', sans-serif;
     font-size: 2.2rem;
     font-weight: 700;
-    color: #4FA37A;
+    color: #4ADE80;
     display: block;
 }
 .sg-stat-lbl { font-size: 0.75rem; color: #555; letter-spacing: 0.1em; text-transform: uppercase; }
 
 /* Buttons */
 .sg-btn-primary {
-    background: #4FA37A;
-    color: #0F241A;
+    background: #4ADE80;
+    color: #0A1F1F;
     border: none;
     padding: 0.9rem 2.2rem;
     font-size: 0.85rem;
@@ -585,7 +585,7 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
 }
 .sg-btn-ghost {
     background: transparent;
-    color: #F5F0E8;
+    color: #FFFFFF;
     border: 1px solid #2C4C38;
     padding: 0.9rem 2.2rem;
     font-size: 0.85rem;
@@ -605,13 +605,13 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
 .sg-section-full {
     padding: 6rem 3rem;
     background: #112318;
-    border-top: 1px solid #1E3A29;
-    border-bottom: 1px solid #1E3A29;
+    border-top: 1px solid #1A3A3A;
+    border-bottom: 1px solid #1A3A3A;
 }
 .sg-section-title {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', sans-serif;
     font-size: 2.4rem;
-    color: #F5F0E8;
+    color: #FFFFFF;
     margin-bottom: 0.75rem;
 }
 .sg-section-sub { font-size: 0.95rem; color: #555; margin-bottom: 3rem; }
@@ -625,17 +625,17 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     margin-bottom: 1rem;
 }
 .sg-score-big {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', sans-serif;
     font-size: 5rem;
     font-weight: 700;
-    color: #4FA37A;
+    color: #4ADE80;
     line-height: 1;
 }
 .sg-grade {
     display: inline-block;
-    background: rgba(79,163,122,0.15);
-    border: 1px solid rgba(79,163,122,0.3);
-    color: #4FA37A;
+    background: rgba(74,222,128,0.15);
+    border: 1px solid rgba(74,222,128,0.3);
+    color: #4ADE80;
     font-size: 1rem;
     font-weight: 700;
     padding: 0.3rem 0.8rem;
@@ -647,19 +647,19 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     display: flex;
     justify-content: space-between;
     padding: 0.75rem 0;
-    border-bottom: 1px solid #1E3A29;
+    border-bottom: 1px solid #1A3A3A;
     font-size: 0.9rem;
 }
 .sg-metric-label { color: #555; }
-.sg-metric-value { color: #F5F0E8; font-weight: 500; }
+.sg-metric-value { color: #FFFFFF; font-weight: 500; }
 .sg-metric-value.positive { color: #4CAF50; }
 .sg-metric-value.negative { color: #EF5350; }
-.sg-metric-value.gold { color: #4FA37A; }
+.sg-metric-value.gold { color: #4ADE80; }
 
 /* Deal alert */
 .sg-deal-box {
-    background: rgba(79,163,122,0.08);
-    border: 1px solid rgba(79,163,122,0.25);
+    background: rgba(74,222,128,0.08);
+    border: 1px solid rgba(74,222,128,0.25);
     border-radius: 4px;
     padding: 1.25rem 1.5rem;
     margin-top: 1rem;
@@ -673,14 +673,14 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: #4FA37A;
+    color: #4ADE80;
     margin-bottom: 0.4rem;
 }
 .sg-deal-title.nodeal { color: #555; }
 
 /* Form styling */
 .stSelectbox label, .stSlider label, .stNumberInput label {
-    color: #777 !important;
+    color: rgba(255,255,255,0.55) !important;
     font-size: 0.8rem !important;
     letter-spacing: 0.1em !important;
     text-transform: uppercase !important;
@@ -688,16 +688,16 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
 .stSelectbox > div > div {
     background: #13291D !important;
     border-color: #2C4C38 !important;
-    color: #F5F0E8 !important;
+    color: #FFFFFF !important;
 }
 .stNumberInput input {
     background: #13291D !important;
     border-color: #2C4C38 !important;
-    color: #F5F0E8 !important;
+    color: #FFFFFF !important;
 }
 .stButton button {
-    background: #4FA37A !important;
-    color: #0F241A !important;
+    background: #4ADE80 !important;
+    color: #0A1F1F !important;
     border: none !important;
     font-weight: 700 !important;
     letter-spacing: 0.1em !important;
@@ -723,7 +723,7 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     position: relative;
 }
 .sg-plan.featured {
-    border-color: #4FA37A;
+    border-color: #4ADE80;
     background: #122619;
 }
 .sg-plan-badge {
@@ -731,8 +731,8 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     top: -1px;
     left: 50%;
     transform: translateX(-50%);
-    background: #4FA37A;
-    color: #0F241A;
+    background: #4ADE80;
+    color: #0A1F1F;
     font-size: 0.65rem;
     font-weight: 700;
     padding: 0.25rem 1rem;
@@ -740,11 +740,11 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     text-transform: uppercase;
 }
 .sg-plan-name { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; color: #555; margin-bottom: 0.75rem; }
-.sg-plan-price { font-family: 'Playfair Display', serif; font-size: 2.8rem; color: #F5F0E8; margin-bottom: 0.25rem; }
+.sg-plan-price { font-family: 'Inter', sans-serif; font-size: 2.8rem; color: #FFFFFF; margin-bottom: 0.25rem; }
 .sg-plan-price span { font-size: 1rem; font-family: 'Inter', sans-serif; color: #555; }
 .sg-plan-desc { font-size: 0.85rem; color: #555; margin-bottom: 1.5rem; line-height: 1.5; }
-.sg-plan-feature { font-size: 0.82rem; color: #777; padding: 0.4rem 0; border-bottom: 1px solid #1E3A29; display: flex; gap: 0.5rem; align-items: center; }
-.sg-plan-feature::before { content: '—'; color: #4FA37A; font-size: 0.7rem; }
+.sg-plan-feature { font-size: 0.82rem; color: rgba(255,255,255,0.55); padding: 0.4rem 0; border-bottom: 1px solid #1A3A3A; display: flex; gap: 0.5rem; align-items: center; }
+.sg-plan-feature::before { content: '—'; color: #4ADE80; font-size: 0.7rem; }
 
 /* Data source tag */
 .sg-source-tag {
@@ -774,7 +774,7 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
     font-weight: 600;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: #4FA37A;
+    color: #4ADE80;
     margin-bottom: 1.5rem;
     padding-bottom: 0.75rem;
     border-bottom: 1px solid #1D3826;
@@ -783,14 +783,14 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
 /* Footer */
 .sg-footer {
     background: #0A1911;
-    border-top: 1px solid #1E3A29;
+    border-top: 1px solid #1A3A3A;
     padding: 3rem;
     text-align: center;
 }
 .sg-footer-logo {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', sans-serif;
     font-size: 1.2rem;
-    color: #4FA37A;
+    color: #4ADE80;
     margin-bottom: 1rem;
 }
 .sg-footer-copy { font-size: 0.8rem; color: #333; }
@@ -805,7 +805,7 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
 /* Divider */
 .sg-divider {
     height: 1px;
-    background: linear-gradient(90deg, transparent, #4FA37A, transparent);
+    background: linear-gradient(90deg, transparent, #4ADE80, transparent);
     opacity: 0.2;
     margin: 0;
 }
@@ -829,11 +829,11 @@ div.st-key-sidenav .stButton button p { font-size: 0.88rem !important; }
 .sg-table td {
     padding: 0.85rem 1rem;
     border-bottom: 1px solid #16301F;
-    color: #C0B89A;
+    color: rgba(255,255,255,0.75);
 }
-.sg-table td:first-child { color: #F5F0E8; font-weight: 500; }
-.sg-table td:last-child { color: #4FA37A; font-family: 'Courier New', monospace; font-size: 1rem; }
-.sg-table tr:hover td { background: rgba(79,163,122,0.03); }
+.sg-table td:first-child { color: #FFFFFF; font-weight: 500; }
+.sg-table td:last-child { color: #4ADE80; font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
+.sg-table tr:hover td { background: rgba(74,222,128,0.03); }
 </style>
 """), unsafe_allow_html=True)
 
@@ -1083,8 +1083,8 @@ if st.session_state.page == "home":
     with col1:
         st.markdown(html_block("""
         <div class="sg-score-card">
-            <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4FA37A;margin-bottom:1rem;">01 — AVM Quantitatif</div>
-            <div style="font-size:1.5rem;font-family:'Playfair Display',serif;color:#F5F0E8;margin-bottom:0.75rem;">Prix de Marché Réel</div>
+            <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4ADE80;margin-bottom:1rem;">01 — AVM Quantitatif</div>
+            <div style="font-size:1.5rem;font-family:'Inter',sans-serif;color:#FFFFFF;margin-bottom:0.75rem;">Prix de Marché Réel</div>
             <div style="font-size:0.85rem;color:#555;line-height:1.7;">
                 Calibré sur les transactions DVF réelles. Ajusté par DPE, surface, commune et position frontalière.
                 Pas une estimation générique — un calcul sur votre bien précis.
@@ -1094,9 +1094,9 @@ if st.session_state.page == "home":
 
     with col2:
         st.markdown(html_block("""
-        <div class="sg-score-card" style="border-color:#4FA37A;">
-            <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4FA37A;margin-bottom:1rem;">02 — Score GexScore</div>
-            <div style="font-size:1.5rem;font-family:'Playfair Display',serif;color:#F5F0E8;margin-bottom:0.75rem;">Indice 0–1000</div>
+        <div class="sg-score-card" style="border-color:#4ADE80;">
+            <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4ADE80;margin-bottom:1rem;">02 — Score GexScore</div>
+            <div style="font-size:1.5rem;font-family:'Inter',sans-serif;color:#FFFFFF;margin-bottom:0.75rem;">Indice 0–1000</div>
             <div style="font-size:0.85rem;color:#555;line-height:1.7;">
                 Score composite intégrant localisation frontalière, DPE, désert médical,
                 bruit A40/GVA, et score ESG. Grade de AAA à CCC, comme une notation obligataire.
@@ -1107,8 +1107,8 @@ if st.session_state.page == "home":
     with col3:
         st.markdown(html_block("""
         <div class="sg-score-card">
-            <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4FA37A;margin-bottom:1rem;">03 — Deal Alert</div>
-            <div style="font-size:1.5rem;font-family:'Playfair Display',serif;color:#F5F0E8;margin-bottom:0.75rem;">Signal Temps Réel</div>
+            <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4ADE80;margin-bottom:1rem;">03 — Deal Alert</div>
+            <div style="font-size:1.5rem;font-family:'Inter',sans-serif;color:#FFFFFF;margin-bottom:0.75rem;">Signal Temps Réel</div>
             <div style="font-size:0.85rem;color:#555;line-height:1.7;">
                 Détection automatique des biens sous-évalués vs le marché DVF réel.
                 Signal Deal si écart > 5%. Quantification de l'économie potentielle en EUR.
@@ -1122,7 +1122,7 @@ if st.session_state.page == "home":
     st.markdown(html_block("""
     <div style="text-align:center;padding:5rem 2rem;">
         <p class="sg-eyebrow" style="justify-content:center;">Commencer maintenant</p>
-        <h2 style="font-family:'Playfair Display',serif;font-size:2rem;color:#F5F0E8;margin-bottom:1rem;">
+        <h2 style="font-family:'Inter',sans-serif;font-size:2rem;color:#FFFFFF;margin-bottom:1rem;">
             3 estimations gratuites
         </h2>
         <p style="color:#555;font-size:0.95rem;margin-bottom:2rem;">Aucune carte bancaire requise. Accès immédiat.</p>
@@ -1328,7 +1328,7 @@ elif st.session_state.page == "estimate":
 
             # Score principal
             st.markdown(html_block(f"""
-            <div class="sg-score-card" style="border-color: {'#4FA37A' if score >= 700 else '#2C4C38'};">
+            <div class="sg-score-card" style="border-color: {'#4ADE80' if score >= 700 else '#2C4C38'};">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.5rem;">
                     <div>
                         <div style="font-size:0.7rem;font-weight:600;letter-spacing:0.2em;text-transform:uppercase;color:#555;margin-bottom:0.5rem;">GexScore</div>
@@ -1337,7 +1337,7 @@ elif st.session_state.page == "estimate":
                     </div>
                     <div style="text-align:right;">
                         <div style="font-size:0.7rem;color:#555;margin-bottom:0.3rem;">RECOMMANDATION</div>
-                        <div style="font-size:0.9rem;color:#4FA37A;font-weight:500;">{action}</div>
+                        <div style="font-size:0.9rem;color:#4ADE80;font-weight:500;">{action}</div>
                     </div>
                 </div>
 
@@ -1392,7 +1392,7 @@ elif st.session_state.page == "estimate":
                         continue
                     st.markdown(html_block(f"""
                     <div class="sg-metric">
-                        <span class="sg-metric-label">{_label}<br><span style="font-size:0.65rem;color:#777;">{_note}</span></span>
+                        <span class="sg-metric-label">{_label}<br><span style="font-size:0.65rem;color:rgba(255,255,255,0.55);">{_note}</span></span>
                         <span class="sg-metric-value">{_val:.1f}</span>
                     </div>
                     """), unsafe_allow_html=True)
@@ -1421,10 +1421,10 @@ elif st.session_state.page == "estimate":
                     st.markdown(html_block(f"""
                     <div class="sg-deal-box">
                         <div class="sg-deal-title">⚡ DEAL ALERT DÉTECTÉ</div>
-                        <div style="font-family:'Playfair Display',serif;font-size:1.6rem;color:#F5F0E8;margin:0.3rem 0;">
+                        <div style="font-family:'Inter',sans-serif;font-size:1.6rem;color:#FFFFFF;margin:0.3rem 0;">
                             {abs(disc):.1f}% sous le marché
                         </div>
-                        <div style="font-size:0.85rem;color:#4FA37A;">
+                        <div style="font-size:0.85rem;color:#4ADE80;">
                             Économie potentielle : {eco:,.0f} EUR
                         </div>
                     </div>
@@ -1801,10 +1801,10 @@ elif st.session_state.page == "market":
                 insight_txt = f"""
                 <div style="padding: 3rem;">
                     <div class="sg-score-card">
-                        <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4FA37A;margin-bottom:1rem;">
+                        <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4ADE80;margin-bottom:1rem;">
                             Insight ScoreGex
                         </div>
-                        <div style="font-size:1rem;color:#F5F0E8;line-height:1.8;">
+                        <div style="font-size:1rem;color:#FFFFFF;line-height:1.8;">
                             {c_max['commune']} affiche le prix médian le plus élevé du Pays de Gex
                             ({c_max['prix_m2_median']:,.0f} EUR/m², {c_max['nb_transactions']} transactions DVF).
                             {c_min['commune']} reste le marché le plus accessible
