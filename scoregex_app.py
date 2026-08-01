@@ -1777,22 +1777,44 @@ elif st.session_state.page == "market":
             # au lieu de le rendre (exactement le bug documente dans html_block()).
             st.markdown(html_block(rows + "</tbody></table></div>"), unsafe_allow_html=True)
 
-            # Key insight
-            st.markdown(html_block("""
-            <div style="padding: 3rem;">
-                <div class="sg-score-card">
-                    <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4FA37A;margin-bottom:1rem;">
-                        Insight ScoreGex
-                    </div>
-                    <div style="font-size:1rem;color:#F5F0E8;line-height:1.8;">
-                        Prévessin-Moëns affiche le prix médian le plus élevé (5 543 EUR/m²),
-                        porté par la proximité CERN et la faible distance au poste frontière de Meyrin.
-                        Sergy reste le marché le plus accessible (3 480 EUR/m²) avec une connectivité
-                        Genève supérieure à 30 minutes.
+            # Key insight — RENDU DYNAMIQUE le 01/08/2026 (FEU VERT Helen).
+            # AVANT : ce texte était codé en dur ("Prévessin-Moëns... 5 543
+            # EUR/m²... Sergy... 3 480 EUR/m²"), jamais reconnecté aux vraies
+            # données. Confirmé en direct sur le site live le 31/07/2026 :
+            # le tableau réel (juste au-dessus) affichait Prévessin-Moëns à
+            # 4 894 EUR/m² (pas 5 543, écart de 649€) et Prévessin-Moëns
+            # n'était même plus la commune la plus chère (Ornex devant, à
+            # 4 964 EUR/m²) ; Sergy affichait 4 230 EUR/m² (pas 3 480, écart
+            # de 750€) et n'était plus la moins chère (Gex et Saint-Genis-
+            # Pouilly en dessous). Ce bloc mentait donc sur 3 points à la
+            # fois à chaque chargement de page. Recalcul maintenant à partir
+            # du même dict `communes_data` que le tableau ci-dessus (source
+            # unique) : ce texte ne peut plus jamais diverger de la table,
+            # par construction. Les anciennes affirmations qualitatives
+            # (proximité CERN, poste de Meyrin, "connectivité Genève >30min")
+            # n'étaient pas vérifiables/sourcées et ont été retirées plutôt
+            # que reconduites sans preuve.
+            if communes_data:
+                sorted_c = sorted(communes_data.items(), key=lambda x: -x[1]["prix_m2_median"])
+                c_max = sorted_c[0][1]
+                c_min = sorted_c[-1][1]
+                insight_txt = f"""
+                <div style="padding: 3rem;">
+                    <div class="sg-score-card">
+                        <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:#4FA37A;margin-bottom:1rem;">
+                            Insight ScoreGex
+                        </div>
+                        <div style="font-size:1rem;color:#F5F0E8;line-height:1.8;">
+                            {c_max['commune']} affiche le prix médian le plus élevé du Pays de Gex
+                            ({c_max['prix_m2_median']:,.0f} EUR/m², {c_max['nb_transactions']} transactions DVF).
+                            {c_min['commune']} reste le marché le plus accessible
+                            ({c_min['prix_m2_median']:,.0f} EUR/m², {c_min['nb_transactions']} transactions DVF).
+                            Calculé à chaque chargement à partir des mêmes données que le tableau ci-dessus.
+                        </div>
                     </div>
                 </div>
-            </div>
-            """), unsafe_allow_html=True)
+                """
+                st.markdown(html_block(insight_txt), unsafe_allow_html=True)
         else:
             st.error("API non disponible")
     except Exception as e:
@@ -1812,7 +1834,16 @@ elif st.session_state.page == "pricing":
     </div>
     """), unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns(3)
+    # AJOUTÉ le 01/08/2026 (FEU VERT Helen, audit externe du 31/07 + ses
+    # propres commentaires : "4ème palier tarifaire Institutionnel : existe
+    # mais mal traité — à corriger !!!"). Avant : 3 colonnes, le palier
+    # Institutionnel/banques-family offices n'était qu'une phrase grisée sous
+    # la grille, sans la même mise en valeur visuelle (carte, checkmarks,
+    # bouton CTA) que les 3 autres plans -- alors qu'il existe déjà
+    # commercialement (1 990 EUR/mois) et figure dans le design system
+    # v2.0 (Tableau 10, doc "Design ScoreGex.pdf") comme 4ème colonne à part
+    # entière. Passage à 4 colonnes, carte identique en style aux 3 autres.
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         st.markdown(html_block("""
@@ -1866,14 +1897,21 @@ elif st.session_state.page == "pricing":
         """), unsafe_allow_html=True)
         st.link_button("Contactez-nous", "mailto:contact@scoregex.com?subject=ScoreGex%20B2B%20Agences", use_container_width=True)
 
-    st.markdown(html_block("""
-    <div style="text-align:center;padding:2rem;margin-top:1rem;">
-        <p style="color:#333;font-size:0.8rem;margin-bottom:0.5rem;">
-            Pour banques et family offices : tarification sur mesure à partir de 1 990 EUR/mois
-        </p>
-        <p style="color:#333;font-size:0.78rem;">contact@scoregex.com</p>
-    </div>
-    """), unsafe_allow_html=True)
+    with col4:
+        st.markdown(html_block("""
+        <div class="sg-plan">
+            <div class="sg-plan-name">Institutionnel</div>
+            <div class="sg-plan-price">1 990 <span>EUR / mois</span></div>
+            <div class="sg-plan-desc">Pour banques, family offices et fonds d'investissement.</div>
+            <div class="sg-plan-feature">Estimations illimitées + accès API</div>
+            <div class="sg-plan-feature">Historique 10 ans + données brutes</div>
+            <div class="sg-plan-feature">Couverture France entière</div>
+            <div class="sg-plan-feature">Rapports illimités + marque blanche</div>
+            <div class="sg-plan-feature">Support dédié 24/7</div>
+            <div class="sg-plan-feature">API REST complète + WebSocket</div>
+        </div>
+        """), unsafe_allow_html=True)
+        st.link_button("Nous consulter", "mailto:contact@scoregex.com?subject=ScoreGex%20Institutionnel", use_container_width=True)
 
 
 # ════════════════════════════════════════════════════════════════════════════════
