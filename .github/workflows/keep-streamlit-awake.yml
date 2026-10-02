@@ -1,0 +1,55 @@
+name: Keep ScoreGex Streamlit awake
+
+# Contexte (30/09/2026) : scoregex.com pointe (redirection GoDaddy) vers
+# scoregex.streamlit.app, hébergé sur Streamlit Community Cloud (offre
+# gratuite). Cette offre met l'app en veille après une période d'inactivité
+# (aucune visite) et affiche alors un écran "Zzz... this app has gone to
+# sleep" aux visiteurs, qui doivent cliquer pour la reveiller (~30-60s de
+# démarrage) — c'est ce que les visiteurs decrivaient comme "rame"/"en
+# suspens". Ce comportement est propre a Streamlit Community Cloud et n'a
+# aucun rapport avec l'hebergement Vercel de l'API (scoregex.vercel.app),
+# deja surveillee independamment par uptime-check.yml.
+#
+# Solution (Option A, validee par Helen le 30/09/2026) : une requete HTTP
+# reguliere sur l'URL Streamlit, assez frequente pour qu'elle ne cumule
+# jamais assez d'inactivite pour s'endormir. Toutes les 6h est tres
+# largement sous le seuil d'inactivite de Streamlit Cloud (plusieurs jours),
+# avec une marge confortable meme si une execution est retardee/manquee.
+#
+# Limite connue, assumee : ceci ne resout que le symptome (l'app ne
+# s'endort plus). Ca ne resout pas la lenteur structurelle de Streamlit
+# Community Cloud (partage de ressources, pas de vrai CDN/edge comme
+# Vercel) ni le fait que ce n'est pas une architecture "pro". La vraie
+# solution est l'Option B, planifiee separement : migrer le frontend visuel
+# vers une app Vercel (React/Next.js), sur le meme modele que
+# steelldy-indices.com.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"   # toutes les 6h, a :17 pour eviter la ruee de minute 0
+  workflow_dispatch: {}   # permet de lancer manuellement depuis l'onglet Actions
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping scoregex.streamlit.app pour empecher la mise en veille
+        run: |
+          set -e
+          URL="https://scoregex.streamlit.app"
+          echo "Premiere requete (peut recevoir l'ecran de reveil si l'app dormait deja) :"
+          CODE=$(curl -s -o /tmp/resp1.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
+          echo "HTTP $CODE"
+
+          if [ "$CODE" != "200" ]; then
+            echo "::warning::Premiere requete HTTP $CODE — nouvelle tentative dans 45s (reveil en cours possible)."
+            sleep 45
+            CODE2=$(curl -s -o /tmp/resp2.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
+            echo "HTTP $CODE2 (2e tentative)"
+            if [ "$CODE2" != "200" ]; then
+              echo "::error::scoregex.streamlit.app ne repond toujours pas correctement (HTTP $CODE2) apres 2 tentatives."
+              exit 1
+            fi
+          fi
+
+          echo "OK — scoregex.streamlit.app a repondu, l'horloge d'inactivite est remise a zero."
