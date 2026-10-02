@@ -23,6 +23,11 @@ name: Keep ScoreGex Streamlit awake
 # solution est l'Option B, planifiee separement : migrer le frontend visuel
 # vers une app Vercel (React/Next.js), sur le meme modele que
 # steelldy-indices.com.
+#
+# Correction du 02/10/2026 : le premier run manuel a echoue (HTTP 303 sur
+# les deux tentatives) parce que curl -s ne suit pas les redirections.
+# Ajout de -L (follow redirects) pour capturer le code HTTP final apres
+# redirection plutot que celui de la redirection elle-meme.
 
 on:
   schedule:
@@ -38,13 +43,13 @@ jobs:
           set -e
           URL="https://scoregex.streamlit.app"
           echo "Premiere requete (peut recevoir l'ecran de reveil si l'app dormait deja) :"
-          CODE=$(curl -s -o /tmp/resp1.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
+          CODE=$(curl -sL -o /tmp/resp1.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
           echo "HTTP $CODE"
 
           if [ "$CODE" != "200" ]; then
             echo "::warning::Premiere requete HTTP $CODE — nouvelle tentative dans 45s (reveil en cours possible)."
             sleep 45
-            CODE2=$(curl -s -o /tmp/resp2.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
+            CODE2=$(curl -sL -o /tmp/resp2.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
             echo "HTTP $CODE2 (2e tentative)"
             if [ "$CODE2" != "200" ]; then
               echo "::error::scoregex.streamlit.app ne repond toujours pas correctement (HTTP $CODE2) apres 2 tentatives."
