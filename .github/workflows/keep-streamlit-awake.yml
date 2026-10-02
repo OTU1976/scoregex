@@ -24,10 +24,23 @@ name: Keep ScoreGex Streamlit awake
 # vers une app Vercel (React/Next.js), sur le meme modele que
 # steelldy-indices.com.
 #
-# Correction du 02/10/2026 : le premier run manuel a echoue (HTTP 303 sur
-# les deux tentatives) parce que curl -s ne suit pas les redirections.
-# Ajout de -L (follow redirects) pour capturer le code HTTP final apres
-# redirection plutot que celui de la redirection elle-meme.
+# Correction du 02/10/2026 (v1) : le run #1 a echoue (HTTP 303 sur les
+# deux tentatives) parce que curl -s ne suit pas les redirections.
+# Ajout de -L (follow redirects).
+#
+# Correction du 02/10/2026 (v2) : le run #2 a quand meme echoue (HTTP
+# 303000 = 303 suivi du fallback d'erreur concatene). Cause reelle,
+# verifiee manuellement : scoregex.streamlit.app redirige vers la
+# passerelle d'authentification de Streamlit Community Cloud
+# (share.streamlit.io/-/auth/app -> scoregex.streamlit.app/-/login ->
+# scoregex.streamlit.app/), qui pose des cookies de session a chaque
+# saut. Sans "cookie jar" (-c/-b), curl -L ne conserve pas ces cookies
+# entre les sauts : le serveur ne reconnait jamais la session et relance
+# la boucle d'authentification a l'infini (50 redirections = limite
+# max de curl, puis echec). Ajout de -c/-b sur un fichier cookies
+# temporaire pour que la session soit conservee tout au long de la
+# chaine de redirections. Teste et verifie manuellement : HTTP 200
+# avec le HTML reel de l'application retourne.
 
 on:
   schedule:
@@ -42,14 +55,15 @@ jobs:
         run: |
           set -e
           URL="https://scoregex.streamlit.app"
+          COOKIES="/tmp/scoregex_cookies.txt"
           echo "Premiere requete (peut recevoir l'ecran de reveil si l'app dormait deja) :"
-          CODE=$(curl -sL -o /tmp/resp1.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
+          CODE=$(curl -sL -c "$COOKIES" -b "$COOKIES" -o /tmp/resp1.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
           echo "HTTP $CODE"
 
           if [ "$CODE" != "200" ]; then
             echo "::warning::Premiere requete HTTP $CODE — nouvelle tentative dans 45s (reveil en cours possible)."
             sleep 45
-            CODE2=$(curl -sL -o /tmp/resp2.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
+            CODE2=$(curl -sL -c "$COOKIES" -b "$COOKIES" -o /tmp/resp2.html -w "%{http_code}" --max-time 30 "$URL" || echo "000")
             echo "HTTP $CODE2 (2e tentative)"
             if [ "$CODE2" != "200" ]; then
               echo "::error::scoregex.streamlit.app ne repond toujours pas correctement (HTTP $CODE2) apres 2 tentatives."
